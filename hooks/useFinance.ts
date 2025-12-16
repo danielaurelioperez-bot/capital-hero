@@ -8,10 +8,10 @@ import {
   PaymentFrequency,
   Irregularity
 } from '../finance/storage';
-import { FinanceSnapshot } from '../finance/selectors';
+import { FinanceSnapshot, NextStep } from '../finance/selectors';
 
 // Re-export types so UI components don't break
-export type { Transaction, TransactionType, ExpenseCategory, IncomeCategory, PaymentFrequency, Irregularity, FinanceSnapshot };
+export type { Transaction, TransactionType, ExpenseCategory, IncomeCategory, PaymentFrequency, Irregularity, FinanceSnapshot, NextStep };
 
 export const useFinance = () => {
   const context = useContext(FinanceContext);
