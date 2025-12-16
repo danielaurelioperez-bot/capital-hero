@@ -1,15 +1,22 @@
 import React, { useState } from 'react';
-import { ArrowRight, ShieldCheck, AlertTriangle, Lock, ChevronRight, Plus, Minus, Info, Unlock, ArrowRightLeft, Target, Check, RefreshCw, Database, ShieldAlert, Zap, Sparkles, CheckCircle2 } from 'lucide-react';
-import { useFinance } from '../hooks/useFinance';
+import { ArrowRight, ShieldCheck, AlertTriangle, Lock, Plus, Minus, Info, ArrowRightLeft, Target, ShieldAlert, Sparkles, CalendarClock, PiggyBank, NotebookPen, Wallet, Shield, ArrowUpRight } from 'lucide-react';
+import { useFinance, NextStep } from '../hooks/useFinance';
 import { CharacterPortrait } from '../components/PixelAvatars';
 import { useNavigate } from 'react-router-dom';
 import { SheetView, Goal } from '../finance/storage';
 import GoalsModal from '../components/GoalsModal';
 import AllocateToEmergencyModal from '../components/AllocateToEmergencyModal';
-import { MissionIconType, MissionColor } from '../finance/missions'; // Import MissionIconType and MissionColor
+
+type StepMeta = {
+  label: string;
+  icon: React.ComponentType<{ className?: string; size?: number }>;
+  color: string;
+  bg: string;
+  pill: string;
+};
 
 const ControlView: React.FC = () => {
-  const { summary, snapshot, availableMissions, openSheet } = useFinance();
+  const { summary, snapshot, nextSteps, openSheet } = useFinance();
   const navigate = useNavigate();
 
   // Local State for Goals Modal
@@ -123,32 +130,32 @@ const ControlView: React.FC = () => {
     </div>
   );
 
-  // Helper to render icons based on string name (copied from Home.tsx/Missions.tsx)
-  const renderMissionIcon = (name: MissionIconType, colorClass: string) => {
-    const props = { className: colorClass, size: 20, strokeWidth: 3 };
-    switch (name) {
-      case 'refresh': return <RefreshCw {...props} />;
-      case 'database': return <Database {...props} />;
-      case 'shield-alert': return <ShieldAlert {...props} />;
-      case 'zap': return <Zap {...props} />;
-      case 'target': return <Target {...props} />;
-      case 'sparkles': return <Sparkles {...props} />;
-      case 'check-circle': return <CheckCircle2 {...props} />;
-      case 'lock': return <Lock {...props} />;
-      default: return <Plus {...props} />; // Fallback to Plus for unknown types
+  const getStepMeta = (missionId: string): StepMeta => {
+    const map: Record<string, StepMeta> = {
+      check_balances: { label: 'Riesgo inmediato', icon: ShieldAlert, color: 'text-rose-600', bg: 'bg-rose-50', pill: 'bg-rose-100 text-rose-700 border-rose-200' },
+      add_income: { label: 'Datos esenciales', icon: Wallet, color: 'text-indigo-600', bg: 'bg-indigo-50', pill: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+      add_recurring: { label: 'Compromisos fijos', icon: CalendarClock, color: 'text-amber-600', bg: 'bg-amber-50', pill: 'bg-amber-100 text-amber-700 border-amber-200' },
+      cover_threat: { label: 'Pago próximo', icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50', pill: 'bg-rose-100 text-rose-700 border-rose-200' },
+      daily_checkin: { label: 'Disciplina diaria', icon: NotebookPen, color: 'text-slate-600', bg: 'bg-slate-50', pill: 'bg-slate-100 text-slate-700 border-slate-200' },
+      start_emergency: { label: 'Fondo de seguridad', icon: Shield, color: 'text-emerald-600', bg: 'bg-emerald-50', pill: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+      assign_surplus: { label: 'Usa excedentes', icon: PiggyBank, color: 'text-amber-600', bg: 'bg-amber-50', pill: 'bg-amber-100 text-amber-700 border-amber-200' },
+      system_stable: { label: 'Sin alertas', icon: ShieldCheck, color: 'text-slate-500', bg: 'bg-slate-50', pill: 'bg-slate-100 text-slate-600 border-slate-200' },
+      no_missions_yet: { label: 'Modo relax', icon: Sparkles, color: 'text-indigo-500', bg: 'bg-indigo-50', pill: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+    };
+    return map[missionId] || { label: 'Optimización', icon: Sparkles, color: 'text-slate-500', bg: 'bg-slate-50', pill: 'bg-slate-100 text-slate-600 border-slate-200' };
+  };
+
+  const handleStepAction = (step: NextStep) => {
+    if (step.isBlocked) return;
+    if (step.actionType === 'sheet') {
+      openSheet((step.actionPayload as SheetView) || 'menu');
+    } else if (step.actionType === 'navigate' && step.actionPayload) {
+      navigate(step.actionPayload);
     }
   };
 
-  const getMissionIconColorClass = (color: MissionColor) => {
-    switch (color) {
-      case 'indigo': return 'text-[#492582]';
-      case 'green': return 'text-green-600';
-      case 'rose': return 'text-rose-500';
-      case 'amber': return 'text-amber-600';
-      case 'slate': return 'text-slate-400';
-      default: return 'text-slate-400';
-    }
-  };
+  const primaryStep = nextSteps[0];
+  const secondarySteps = nextSteps.slice(1);
 
   return (
     <div className="space-y-10 pt-6 pb-20">
@@ -360,55 +367,132 @@ const ControlView: React.FC = () => {
       </section>
 
       {/* BLOCK 5: NEXT STEPS */}
-      <section className="space-y-6 px-4">
-         <div className="pl-2">
-            <h2 className="text-xs font-black text-slate-300 uppercase tracking-widest mb-1">Possible Next Steps</h2>
-         </div>
+      <section className="space-y-4 px-4">
+        <div className="flex items-center justify-between gap-3 pl-2">
+          <div>
+            <h2 className="text-xs font-black text-slate-300 uppercase tracking-widest mb-1">Próximos pasos</h2>
+            <p className="text-xs font-medium text-slate-400">Ordenados por riesgo, pagos, disciplina y ahorro.</p>
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-slate-500">
+            <div className="px-3 py-1 bg-white border border-slate-200 rounded-full font-black uppercase tracking-wider flex items-center gap-1">
+              <Sparkles size={14} className="text-amber-500" />
+              Vivo
+            </div>
+          </div>
+        </div>
 
-         <div className="space-y-3">
-             {availableMissions.slice(0, 3).map((mission) => (
-                 <button 
-                    key={mission.id} 
-                    onClick={() => {
-                        if (mission.actionView) {
-                            openSheet(mission.actionView);
-                        } else if (mission.actionPath) {
-                            navigate(mission.actionPath);
-                        }
-                    }}
-                    className="w-full bg-white p-5 rounded-3xl border-2 border-slate-100 flex items-center justify-between active:scale-95 transition-all text-left group"
-                    aria-label={`Action: ${mission.actionLabel} for mission: ${mission.title}`}
-                 >
-                     <div className="flex items-center gap-4">
-                        <div className={`p-3 rounded-2xl ${
-                            mission.color === 'indigo' ? 'bg-indigo-50' :
-                            mission.color === 'rose' ? 'bg-rose-50' :
-                            mission.color === 'green' ? 'bg-green-50' :
-                            'bg-amber-50'
-                        }`}>
-                            {renderMissionIcon(mission.iconName, getMissionIconColorClass(mission.color))}
-                        </div>
-                        <div>
-                            <h4 className="font-black text-slate-800 text-sm mb-0.5">{mission.title}</h4>
-                            <p className="text-xs font-medium text-slate-400 line-clamp-1">{mission.desc}</p>
-                        </div>
-                     </div>
-                     <ChevronRight size={20} className="text-slate-300 group-hover:text-slate-500 transition-colors" />
-                 </button>
-             ))}
-         </div>
+        {primaryStep && (
+          <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-900 text-white p-6 rounded-3xl shadow-xl space-y-4 border border-slate-800">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-black uppercase tracking-widest bg-white/10 px-3 py-1 rounded-full border border-white/10">Prioridad 1</span>
+                  <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1 rounded-full border ${getStepMeta(primaryStep.missionId).pill}`}>
+                    {getStepMeta(primaryStep.missionId).label}
+                  </span>
+                </div>
+                <h3 className="text-2xl font-black leading-tight">{primaryStep.title}</h3>
+                <p className="text-sm text-indigo-100 leading-relaxed">{primaryStep.description}</p>
+              </div>
+              <div className={`p-3 rounded-2xl bg-white/5 border border-white/10`}>
+                {React.createElement(getStepMeta(primaryStep.missionId).icon, { className: `w-7 h-7 ${getStepMeta(primaryStep.missionId).color}` })}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-indigo-100 font-semibold bg-white/5 px-3 py-2 rounded-xl border border-white/10">
+              <Sparkles size={14} className="text-amber-300" />
+              <span className="line-clamp-1">{primaryStep.impactText}</span>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              {primaryStep.isBlocked ? (
+                <div className="w-full bg-white/10 text-rose-100 border border-rose-200/30 rounded-2xl px-4 py-3 text-sm font-semibold flex items-center gap-2">
+                  <Lock size={16} />
+                  <span>{primaryStep.blockedReason}</span>
+                </div>
+              ) : primaryStep.actionType !== 'none' ? (
+                <button
+                  onClick={() => handleStepAction(primaryStep)}
+                  className="w-full sm:w-auto bg-white text-slate-900 font-bold text-sm px-5 py-4 rounded-2xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                  aria-label={`Ejecutar: ${primaryStep.ctaLabel}`}
+                >
+                  <span>{primaryStep.ctaLabel}</span>
+                  <ArrowUpRight size={18} />
+                </button>
+              ) : null}
+              <div className="flex-1 text-[11px] text-indigo-100 font-semibold uppercase tracking-wider">
+                {primaryStep.isBlocked ? "Resuelve el bloqueo para continuar." : "Listo en un solo tap."}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {secondarySteps.map((step, index) => {
+            const meta = getStepMeta(step.missionId);
+            return (
+              <div key={`${step.missionId}-${step.title}`} className="bg-white p-4 rounded-2xl border-2 border-slate-100 shadow-sm flex gap-3">
+                <div className={`${meta.bg} border ${meta.pill.split(' ').filter(c => c.startsWith('border-')).join(' ')} p-3 rounded-xl`}>
+                  {React.createElement(meta.icon, { className: `w-5 h-5 ${meta.color}` })}
+                </div>
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">Paso {index + 2}</p>
+                      <h4 className="font-bold text-slate-800">{step.title}</h4>
+                    </div>
+                    <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1 rounded-full border ${meta.pill}`}>
+                      {meta.label}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-600 leading-relaxed line-clamp-2">{step.description}</p>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+                    <div className="text-xs text-slate-500 font-semibold flex items-center gap-2">
+                      <Sparkles size={14} className={meta.color} />
+                      <span className="line-clamp-1">{step.impactText}</span>
+                    </div>
+                    {step.isBlocked ? (
+                      <div className="flex items-center gap-2 text-xs font-bold text-rose-500 bg-rose-50 border border-rose-100 px-3 py-2 rounded-full">
+                        <Lock size={14} />
+                        <span>{step.blockedReason}</span>
+                      </div>
+                    ) : step.actionType !== 'none' ? (
+                      <button
+                        onClick={() => handleStepAction(step)}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900 text-white text-xs font-bold shadow-sm active:scale-95 transition-transform"
+                        aria-label={`Ejecutar: ${step.ctaLabel}`}
+                      >
+                        <span>{step.ctaLabel}</span>
+                        <ArrowRight size={16} />
+                      </button>
+                    ) : (
+                      <div className="text-xs text-slate-400 font-bold px-3 py-2 rounded-full bg-slate-50 border border-slate-100">
+                        Solo informativo
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       {/* BLOCK 6: CLOSURE */}
       <section className="px-6 py-6 text-center">
-          <button 
-             onClick={() => navigate('/missions')}
-             className="w-full bg-slate-900 text-white font-bold text-lg py-5 rounded-3xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-3"
-             aria-label="Go to next mission"
-          >
-              <span>Go to Next Step</span>
-              <ArrowRight size={20} />
-          </button>
+        <button 
+           onClick={() => primaryStep ? handleStepAction(primaryStep) : navigate('/missions')}
+           disabled={primaryStep?.isBlocked}
+           className={`w-full ${primaryStep?.isBlocked ? 'bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white'} font-bold text-lg py-5 rounded-3xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-3`}
+           aria-label="Ir al siguiente paso"
+        >
+            <span>{primaryStep ? primaryStep.ctaLabel : 'Go to Next Step'}</span>
+            <ArrowRight size={20} />
+        </button>
+        {primaryStep?.isBlocked && (
+          <p className="text-xs font-semibold text-rose-500 mt-3 flex items-center justify-center gap-2">
+            <Lock size={14} />
+            {primaryStep.blockedReason}
+          </p>
+        )}
       </section>
 
       <GoalsModal 
