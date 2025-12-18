@@ -114,13 +114,6 @@ const Missions: React.FC = () => {
                    )
                  })}
                </div>
-                        aria-label="Mark mission as accomplished"
-                    >
-                        <Check size={18} />
-                        <span>Mission Accomplished</span>
-                    </button>
-                 )}
-             </div>
           </div>
 
           {/* SKIP BUTTON - Hidden if no missions fallback */}
@@ -182,7 +175,7 @@ const Missions: React.FC = () => {
                        {s.action}
                      </span>
                    </button>
-                 ))}
+                  )})}
                </div>
             </section>
           )}

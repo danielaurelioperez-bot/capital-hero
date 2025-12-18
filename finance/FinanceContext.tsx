@@ -9,7 +9,14 @@ import {
 } from './storage';
 import { FinanceEvent, reduceEvents } from './events';
 import { computeStatus, ComputedStatus } from './computeStatus';
-import { getFinanceSnapshot, FinanceSnapshot, getProgressInsights, ProgressInsights, selectNextSteps, NextStep } from './selectors';
+import {
+  getFinanceSnapshot,
+  getProgressInsights,
+  selectNextSteps,
+  type FinanceSnapshot,
+  type ProgressInsights,
+  type NextStep,
+} from './selectors';
 import { Mission, getActiveMission, getNextMissions } from './missions';
 import { getMissionImpact } from './impact';
 
@@ -34,7 +41,6 @@ interface FinanceContextType {
   // Mission Control
   activeMission: Mission; 
   availableMissions: Mission[]; 
-  nextSteps: NextStep[];
   completeMission: (mission: Mission) => void;
   skipMission: (mission: Mission) => void;
 
@@ -126,7 +132,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const summary = useMemo(() => computeStatus(state, daysOffline), [state, daysOffline]);
   const snapshot = useMemo(() => getFinanceSnapshot(state), [state]);
   const insights = useMemo(() => getProgressInsights(state), [state]);
-  const nextSteps = useMemo(() => selectNextSteps(state, 5), [state]);
 
   const nextSteps = useMemo(() => selectNextSteps(state, summary, 5), [state, summary]);
 
@@ -460,7 +465,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       lastEvent,
       daysOffline,
       impactMsg,
-      nextSteps,
       isSheetOpen,
       sheetView,
       sheetPayload,
