@@ -22,6 +22,7 @@ interface FinanceContextType {
   summary: ComputedStatus;
   snapshot: FinanceSnapshot;
   insights: ProgressInsights;
+  nextSteps: NextStep[];
   xp: number;
   level: number;
   nextLevelXp: number;
@@ -77,6 +78,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [sheetView, setSheetView] = useState<SheetView>('menu');
+  const [sheetPayload, setSheetPayload] = useState<any>(null);
 
   useEffect(() => {
     const loadedEvents = loadEvents();
@@ -125,6 +127,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const snapshot = useMemo(() => getFinanceSnapshot(state), [state]);
   const insights = useMemo(() => getProgressInsights(state), [state]);
   const nextSteps = useMemo(() => selectNextSteps(state, 5), [state]);
+
+  const nextSteps = useMemo(() => selectNextSteps(state, summary, 5), [state, summary]);
 
   const activeMission = useMemo(() => 
     getActiveMission(state, daysOffline, snapshot), 
@@ -412,8 +416,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return success;
   };
 
-  const openSheet = (view: SheetView = 'menu') => {
+  const openSheet = (view: SheetView = 'menu', payload?: any) => {
     setIsSheetOpen(true); // Open first to ensure it's rendered for animation
+    setSheetPayload(payload ?? null);
     setTimeout(() => setSheetView(view), 50); // Small delay to allow initial render before setting view
   };
 
@@ -450,6 +455,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       summary, 
       snapshot,
       insights,
+      nextSteps,
       recentAction,
       lastEvent,
       daysOffline,
@@ -457,6 +463,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       nextSteps,
       isSheetOpen,
       sheetView,
+      sheetPayload,
       openSheet,
       closeSheet,
       lastWithdrawalForSpending, // NEW

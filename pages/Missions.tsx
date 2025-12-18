@@ -3,9 +3,10 @@ import { CheckCircle2, Target, ArrowRight, ShieldAlert, Database, Zap, RefreshCw
 import { useFinance } from '../hooks/useFinance';
 import { MissionIconType, MissionColor } from '../finance/missions';
 import { useNavigate } from 'react-router-dom';
+import { handleNextStep } from '../finance/nextStepActions';
 
 const Missions: React.FC = () => {
-  const { activeMission, completeMission, skipMission, openSheet } = useFinance();
+  const { activeMission, completeMission, skipMission, openSheet, nextSteps, snapshot } = useFinance();
   const navigate = useNavigate();
 
   const isSystemStable = activeMission.id === 'system_stable';
@@ -72,46 +73,47 @@ const Missions: React.FC = () => {
                 </p>
              </div>
 
-             <div className="w-full space-y-4 pt-2">
-                 {/* PRIMARY BUTTON */}
-                 {activeMission.actionPath ? ( // Use actionPath if it exists
-                     <button
-                        onClick={handleAction}
-                        className={`w-full text-white font-bold text-xl py-5 px-6 rounded-2xl border-b-4 active:border-b-0 active:translate-y-1 transition-all flex items-center justify-center gap-3 group ${theme.button}`}
-                     >
-                        <span>{activeMission.actionLabel}</span>
-                        {(activeMission.showArrow === undefined || activeMission.showArrow) && <ArrowRight size={24} className="group-hover:translate-x-1 transition-transform" />}
-                     </button>
-                 ) : activeMission.actionView ? ( // Use actionView if it exists
-                     <button
-                        onClick={handleAction}
-                        className={`w-full text-white font-bold text-xl py-5 px-6 rounded-2xl border-b-4 active:border-b-0 active:translate-y-1 transition-all flex items-center justify-center gap-3 group ${theme.button}`}
-                     >
-                        <span>{activeMission.actionLabel}</span>
-                        {(activeMission.showArrow === undefined || activeMission.showArrow) && <ArrowRight size={24} className="group-hover:translate-x-1 transition-transform" />}
-                     </button>
-                 ) : ( // Fallback for missions with no defined action, or for the 'no missions' state
-                     <button
-                        disabled // Disable if no action is explicitly defined
-                        className="w-full bg-slate-100 text-slate-400 font-bold text-lg py-5 px-6 rounded-2xl border-2 border-slate-200 cursor-not-allowed flex items-center justify-center gap-3"
-                     >
-                        <span>No Action Available</span>
-                        <Lock size={20} />
-                     </button>
-                 )}
-                
-                {/* Conditional hint for action type */}
-                {!isSystemStable && !isNoMissionsFallback && (activeMission.actionView || activeMission.actionPath) && (activeMission.showArrow === undefined || activeMission.showArrow) && (
-                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-2">
-                        {activeMission.actionView ? "This opens the money menu below" : "This takes you to the section"}
-                    </p>
-                )}
+               <div className="space-y-3">
+                 {nextSteps.map((s) => {
+                   // Build suggested payloads per action (quick heuristics)
+                   const avail = snapshot.availableBalance || 0;
+                   const suggested25 = avail > 0 ? Math.max(50, Math.floor(avail * 0.25)) : 50;
+                   const suggested10 = avail > 0 ? Math.max(25, Math.floor(avail * 0.1)) : 25;
 
-                 {/* SECONDARY BUTTON (Completion) - Hidden if stable or no missions */}
-                 {!isSystemStable && !isNoMissionsFallback && (
-                    <button
-                        onClick={() => completeMission(activeMission)}
-                        className="w-full bg-white text-slate-400 font-bold text-sm py-4 px-6 rounded-2xl border-2 border-slate-100 hover:border-slate-300 hover:text-slate-600 active:scale-95 transition-all flex items-center justify-center gap-2"
+                   const payload = (() => {
+                     switch (s.action) {
+                       case 'allocate_emergency':
+                         return { transfer: { amount: Math.min(suggested25, Math.floor(avail)), transferTarget: 'emergency', transferDirection: 'deposit' } };
+                       case 'build_savings':
+                         return { transfer: { amount: Math.min(suggested25, Math.floor(avail)), transferTarget: 'savings', transferDirection: 'deposit' } };
+                       case 'reduce_spending':
+                         return { withdraw: { amount: Math.min(suggested10, Math.floor(avail)) } };
+                       case 'increase_income':
+                         return { income: { amount: Math.max(50, Math.floor(avail * 0.05)), category: 'Other' } };
+                       case 'pay_bills':
+                         return { transfer: { amount: Math.min(suggested10, Math.floor(avail)), transferTarget: 'savings', transferDirection: 'deposit' } };
+                       default:
+                         return undefined;
+                     }
+                   })();
+
+                   return (
+                     <button
+                       key={`${s.action}-${s.title}`}
+                       onClick={() => handleNextStep(s.action, { openSheet, navigate }, payload)}
+                       className="w-full bg-white p-5 rounded-3xl border-2 border-slate-100 flex items-center justify-between active:scale-95 transition-all text-left"
+                     >
+                       <div>
+                         <h4 className="font-black text-slate-800 text-sm mb-1">{s.title}</h4>
+                         <p className="text-xs font-medium text-slate-400">{s.message}</p>
+                       </div>
+                       <span className="text-[11px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-slate-200 text-slate-500">
+                         {s.action}
+                       </span>
+                     </button>
+                   )
+                 })}
+               </div>
                         aria-label="Mark mission as accomplished"
                     >
                         <Check size={18} />
@@ -133,6 +135,56 @@ const Missions: React.FC = () => {
                     <span>Not right now</span>
                  </button>
              </div>
+          )}
+
+          {/* NEXT STEPS - moved from Progress */}
+          {nextSteps && nextSteps.length > 0 && (
+            <section className="space-y-6 px-4 mt-8">
+               <div className="pl-2 text-center">
+                  <h2 className="text-xs font-black text-slate-300 uppercase tracking-widest mb-1">Próximos pasos</h2>
+               </div>
+
+               <div className="space-y-3">
+                 {nextSteps.map((s) => {
+                  // Build suggested payloads per action (quick heuristics)
+                  const avail = snapshot.availableBalance || 0;
+                  const suggested25 = avail > 0 ? Math.max(50, Math.floor(avail * 0.25)) : 50;
+                  const suggested10 = avail > 0 ? Math.max(25, Math.floor(avail * 0.1)) : 25;
+
+                   const payload = (() => {
+                     switch (s.action) {
+                       case 'allocate_emergency':
+                         return { transfer: { amount: Math.min(suggested25, Math.floor(avail)), transferTarget: 'emergency', transferDirection: 'deposit' } };
+                       case 'build_savings':
+                         return { transfer: { amount: Math.min(suggested25, Math.floor(avail)), transferTarget: 'savings', transferDirection: 'deposit' } };
+                       case 'reduce_spending':
+                         return { withdraw: { amount: Math.min(suggested10, Math.floor(avail)) } };
+                       case 'increase_income':
+                         return { income: { amount: Math.max(50, Math.floor(avail * 0.05)), category: 'Other' } };
+                       case 'pay_bills':
+                         return { transfer: { amount: Math.min(suggested10, Math.floor(avail)), transferTarget: 'savings', transferDirection: 'deposit' } };
+                       default:
+                         return undefined;
+                     }
+                   })();
+
+                   return (
+                   <button
+                     key={`${s.action}-${s.title}`}
+                     onClick={() => handleNextStep(s.action, { openSheet, navigate }, payload)}
+                     className="w-full bg-white p-5 rounded-3xl border-2 border-slate-100 flex items-center justify-between active:scale-95 transition-all text-left"
+                   >
+                     <div>
+                       <h4 className="font-black text-slate-800 text-sm mb-1">{s.title}</h4>
+                       <p className="text-xs font-medium text-slate-400">{s.message}</p>
+                     </div>
+                    <span className="text-[11px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-slate-200 text-slate-500">
+                       {s.action}
+                     </span>
+                   </button>
+                 ))}
+               </div>
+            </section>
           )}
       </div>
     </div>

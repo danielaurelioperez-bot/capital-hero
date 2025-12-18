@@ -1,5 +1,7 @@
 import { FinanceState } from './events';
 import { Transaction, Goal } from './storage';
+import { ComputedStatus } from './computeStatus';
+
 
 export interface FinanceSnapshot {
   status: 'Stable' | 'At Risk' | 'In Trouble';
@@ -230,6 +232,7 @@ export const getProgressInsights = (state: FinanceState): ProgressInsights => {
   return { trend: 'stable', title: "Holding the Line", message: "Consistent patterns." };
 };
 
+<<<<<<< HEAD
 // --- NEXT STEPS SELECTOR ---
 
 const PRIORITY_RANK: Record<string, number> = {
@@ -500,3 +503,59 @@ export const selectNextSteps = (state: FinanceState, limit: number = 5): NextSte
     .slice(0, limit)
     .map(c => c.step);
 };
+=======
+export type NextStepActionType = 'allocate_emergency' | 'reduce_spending' | 'increase_income' | 'build_savings' | 'pay_bills';
+
+export interface NextStep {
+  action: NextStepActionType;
+  title: string;
+  message: string;
+  priority: number;
+}
+
+export const selectNextSteps = (state: FinanceState, summary: ComputedStatus, limit: number = 5): NextStep[] => {
+  const snapshot = getFinanceSnapshot(state);
+  const steps: NextStep[] = [];
+
+  if (summary.status === 'In Trouble') {
+    steps.push({
+      action: 'allocate_emergency',
+      title: 'Build Emergency Fund',
+      message: 'Allocate money to emergency fund to cover immediate needs.',
+      priority: 1
+    });
+  }
+
+  if (snapshot.availableBalance < 0 || snapshot.runwayDays <= 7) {
+    steps.push({
+      action: 'reduce_spending',
+      title: 'Reduce Spending',
+      message: 'Cut non-essential expenses to improve cash flow.',
+      priority: 2
+    });
+  }
+
+  if (summary.status === 'At Risk') {
+    steps.push({
+      action: 'build_savings',
+      title: 'Build Savings',
+      message: 'Increase savings to create a safety buffer.',
+      priority: 3
+    });
+  }
+
+  if (summary.status === 'Stable') {
+    steps.push({
+      action: 'increase_income',
+      title: 'Increase Income',
+      message: 'Look for ways to boost your income streams.',
+      priority: 4
+    });
+  }
+
+  // Sort by priority (lower number = higher priority)
+  steps.sort((a, b) => a.priority - b.priority);
+
+  return steps.slice(0, limit);
+};
+>>>>>>> d7c2748 (feat(next-steps): map actions to sheets, add prefills and tests)

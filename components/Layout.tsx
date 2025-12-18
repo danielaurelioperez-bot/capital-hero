@@ -22,6 +22,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     lastWithdrawalForSpending, // NEW
     snapshot, // For availableBalance check
     returnUnusedCash, // To dismiss by returning
+    sheetPayload,
   } = useFinance();
   const [showToast, setShowToast] = useState(false);
   const [showReturnPrompt, setShowReturnPrompt] = useState(false);
@@ -157,7 +158,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       {/* Money Action Sheet */}
       {isSheetOpen && (
-        <MoneySheet isOpen={isSheetOpen} onClose={closeSheet} initialView={sheetView} />
+        <MoneySheet isOpen={isSheetOpen} onClose={closeSheet} initialView={sheetView} initialPayload={(useFinance() as any).sheetPayload} />
       )}
     </div>
   );

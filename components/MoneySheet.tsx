@@ -7,9 +7,10 @@ interface MoneySheetProps {
   isOpen: boolean;
   onClose: () => void;
   initialView?: SheetView;
+  initialPayload?: any;
 }
 
-const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 'menu' }) => {
+const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 'menu', initialPayload }) => {
   const { 
     addTransaction, 
     snapshot, 
@@ -67,6 +68,25 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       if (initialView === 'return_unused_cash' && lastWithdrawalForSpending) {
         setSpendingSourceFundId(lastWithdrawalForSpending.sourceFundId);
         setAmount(snapshot.availableBalance.toFixed(2)); // Pre-fill with available balance
+      }
+      // Apply incoming payload (prefill) if present
+      if (initialPayload) {
+        if (initialPayload.transfer) {
+          const t = initialPayload.transfer;
+          if (t.amount !== undefined) setAmount(String(t.amount));
+          if (t.transferTarget) setTransferTarget(t.transferTarget);
+          if (t.transferDirection) setTransferDirection(t.transferDirection);
+        }
+        if (initialPayload.withdraw) {
+          const w = initialPayload.withdraw;
+          if (w.sourceFundId) setSpendingSourceFundId(w.sourceFundId);
+          if (w.amount !== undefined) setAmount(String(w.amount));
+        }
+        if (initialPayload.income) {
+          const i = initialPayload.income;
+          if (i.amount !== undefined) setAmount(String(i.amount));
+          if (i.category) setCategory(i.category);
+        }
       }
     }
   }, [isOpen, initialView, lastWithdrawalForSpending, snapshot.availableBalance]); // Add new dependencies
