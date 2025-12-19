@@ -12,9 +12,10 @@ const BottomNav: React.FC = () => {
   ];
 
   return (
-    // Móvil: fixed abajo | Web (sm+): deja de ser fixed, se integra al layout
-    <nav className="fixed sm:static bottom-0 left-0 right-0 z-50 pb-safe">
-      <div className="mx-auto w-full max-w-md sm:max-w-2xl lg:max-w-4xl bg-white border-t-2 border-slate-100">
+    // Móvil: fixed abajo. En sm+: se integra (static) y deja de “flotar”.
+    <nav className="fixed sm:static inset-x-0 bottom-0 z-50 pb-safe">
+      {/* Este wrapper asegura que el nav SIEMPRE mida lo mismo que tu panel */}
+      <div className="mx-auto w-full min-w-0 max-w-md sm:max-w-2xl lg:max-w-4xl bg-white border-t-2 border-slate-100">
         <div className="flex justify-between items-center px-4 py-4">
           {navItems.map((item) => {
             const Icon = item.icon;
