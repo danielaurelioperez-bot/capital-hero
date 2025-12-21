@@ -5,6 +5,8 @@ import {
   loadEvents,
   saveEvents,
   SheetView,
+  TransactionDraft,
+  Goal
   Goal,
   TransactionDraft
 } from './storage';
@@ -71,6 +73,9 @@ interface FinanceContextType {
   sheetPayload: any;
   openSheet: (view?: SheetView, payload?: any) => void;
   closeSheet: () => void;
+  draft: TransactionDraft | null;
+  addDraft: (draft: TransactionDraft) => void;
+  clearDraft: () => void;
 
   // NEW: Withdraw for Spending Workflow
   lastWithdrawalForSpending: { initialAmount: number; sourceFundId: string; timestamp: number } | null;
@@ -97,6 +102,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [sheetView, setSheetView] = useState<SheetView>('menu');
   const [sheetPayload, setSheetPayload] = useState<any>(null);
+  const [draft, setDraft] = useState<TransactionDraft | null>(null);
 
   useEffect(() => {
     const loadedEvents = loadEvents();
@@ -507,6 +513,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setIsSheetOpen(false);
   };
 
+  const addDraft = (draftInput: TransactionDraft) => {
+    setDraft(draftInput);
+  };
+
+  const clearDraft = () => {
+    setDraft(null);
+  };
+
   return (
     <FinanceContext.Provider value={{ 
       incomes, 
@@ -546,6 +560,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       sheetPayload,
       openSheet,
       closeSheet,
+      draft,
+      addDraft,
+      clearDraft,
       lastWithdrawalForSpending, // NEW
       initiateWithdrawalForSpending, // NEW
       returnUnusedCash, // NEW

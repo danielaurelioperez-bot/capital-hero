@@ -1,3 +1,5 @@
+import React, { useState, useEffect } from 'react';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Sparkles } from 'lucide-react';
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet } from 'lucide-react';
 import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity, TransactionDraft } from '../hooks/useFinance';
@@ -15,12 +17,16 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     addTransaction, 
     snapshot, 
     moveToSavings, 
+    moveToEmergency, 
     moveToEmergency,
     withdrawFromSavings,
     withdrawFromEmergency,
     initiateWithdrawalForSpending, // NEW
     returnUnusedCash, // NEW
     lastWithdrawalForSpending, // NEW
+    addDraft,
+    clearDraft,
+    draft,
     pendingTransactions,
     addDraft,
     confirmDraft,
@@ -56,10 +62,24 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
   // Withdraw for Spending State
   const [spendingSourceFundId, setSpendingSourceFundId] = useState<string | null>(null);
 
+  // AI Import State
+  const [importText, setImportText] = useState('');
+  const [draftConfidence, setDraftConfidence] = useState<number | null>(null);
+  const [draftMissing, setDraftMissing] = useState<string[]>([]);
+  const [draftForm, setDraftForm] = useState<TransactionDraft | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const [parseError, setParseError] = useState('');
+
   // Initialize date to today on mount
   useEffect(() => {
     setDate(new Date().toISOString().split('T')[0]);
   }, []);
+
+  useEffect(() => {
+    if (draft) {
+      setDraftForm(draft);
+    }
+  }, [draft]);
 
   // Update view when initialView changes (e.g., opened from Missions or Finances)
   useEffect(() => {
@@ -135,6 +155,13 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     setTransferTarget('savings');
     setTransferDirection('deposit'); // Reset transfer direction
     setSpendingSourceFundId(null); // Reset spending source fund
+    setImportText('');
+    setDraftConfidence(null);
+    setDraftMissing([]);
+    setDraftForm(null);
+    setIsParsing(false);
+    setParseError('');
+    clearDraft();
   };
 
   const handleViewChange = (newView: SheetView) => {
@@ -159,6 +186,93 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       setSpendingSourceFundId(lastWithdrawalForSpending.sourceFundId);
       setAmount(snapshot.availableBalance.toFixed(2));
     }
+  };
+
+  const normalizeCategory = (cat: string | undefined, type: 'income' | 'expense'): ExpenseCategory | IncomeCategory => {
+    if (!cat) return type === 'income' ? 'Other' : 'Essentials';
+    const c = cat.toLowerCase();
+    if (['lifestyle', 'non-essentials', 'non essentials'].some((t) => c.includes(t))) return 'Non-essentials';
+    if (['toxic', 'impulse'].some((t) => c.includes(t))) return 'Toxic';
+    if (['debt', 'loan', 'credit'].some((t) => c.includes(t))) return 'Debt';
+    if (['savings', 'save'].some((t) => c.includes(t))) return 'Savings';
+    if (['salary', 'paycheck', 'pay day'].some((t) => c.includes(t))) return 'Salary';
+    if (['freelance', 'contract', 'side'].some((t) => c.includes(t))) return 'Freelance';
+    if (['bonus'].some((t) => c.includes(t))) return 'Bonus';
+    if (['essentials', 'need'].some((t) => c.includes(t))) return 'Essentials';
+    return type === 'income' ? 'Other' : 'Essentials';
+  };
+
+  const handleParseTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!importText.trim()) {
+      setParseError('Paste a transaction description first.');
+      return;
+    }
+
+    setIsParsing(true);
+    setParseError('');
+
+    try {
+      const response = await fetch('/api/ai/parse-transaction', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: importText,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to parse transaction.');
+      }
+
+      const data = await response.json();
+      const parsedDraft: TransactionDraft = {
+        type: data?.draft?.type === 'income' ? 'income' : 'expense',
+        amount: Number(data?.draft?.amount) || 0,
+        merchant: data?.draft?.merchant || '',
+        date: data?.draft?.date || new Date().toISOString().split('T')[0],
+        category: data?.draft?.category || '',
+        notes: data?.draft?.notes || '',
+      };
+
+      setDraftConfidence(typeof data?.confidence === 'number' ? data.confidence : null);
+      setDraftMissing(Array.isArray(data?.missing) ? data.missing : []);
+      addDraft(parsedDraft);
+      setDraftForm(parsedDraft);
+      setView('draft_review');
+    } catch (error: any) {
+      setParseError(error?.message || 'Could not parse transaction.');
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleDraftChange = (field: keyof TransactionDraft, value: string) => {
+    if (!draftForm) return;
+    const updated: TransactionDraft = {
+      ...draftForm,
+      [field]: field === 'amount' ? Number(value) : value,
+    };
+    setDraftForm(updated);
+    addDraft(updated);
+  };
+
+  const handleConfirmDraft = () => {
+    if (!draftForm || !draftForm.amount || draftForm.amount <= 0) return;
+    const normalizedCategory = normalizeCategory(draftForm.category as string | undefined, draftForm.type);
+
+    addTransaction({
+      amount: Math.abs(Number(draftForm.amount)),
+      type: draftForm.type,
+      category: normalizedCategory as any,
+      note: draftForm.notes || draftForm.merchant || 'Imported transaction',
+      date: new Date(draftForm.date || new Date().toISOString().split('T')[0]).toISOString(),
+      recurring: false,
+    });
+
+    clearDraft();
+    resetForm();
+    onClose();
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -226,9 +340,27 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
   const renderMenu = () => (
     <div className="space-y-4 animate-in slide-in-from-bottom-8 duration-300">
       <h2 className="text-xl font-black text-slate-800 text-center mb-6">Select Action</h2>
-      
+
+      {/* Import via AI */}
+      <button
+        onClick={() => handleViewChange('ai_import')}
+        className="w-full bg-indigo-50 border-2 border-indigo-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Import a transaction"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-indigo-100 p-3 rounded-xl text-indigo-600">
+            <Sparkles size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Import</span>
+            <span className="text-xs font-medium text-slate-500">Paste a bank SMS or statement line</span>
+          </div>
+        </div>
+        <ChevronRight className="text-indigo-300 group-hover:text-indigo-500 transition-colors" />
+      </button>
+
       {/* Add Expense (Moved to top as most frequent) */}
-      <button 
+      <button
         onClick={() => handleViewChange('expense')}
         className="w-full bg-rose-50 border-2 border-rose-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Add new expense"
@@ -337,6 +469,174 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     </div>
   );
 
+  const renderImportForm = () => (
+    <form onSubmit={handleParseTransaction} className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+      <div className="flex items-center gap-4 mb-6">
+        <button
+          type="button"
+          onClick={() => setView('menu')}
+          className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+          aria-label="Go back to menu"
+        >
+          <ArrowLeft size={24} />
+        </button>
+        <h2 className="text-xl font-black text-indigo-600">Import Transaction</h2>
+      </div>
+
+      <div className="space-y-4 flex-1">
+        <div className="p-4 bg-indigo-50 border-2 border-indigo-100 rounded-2xl text-sm text-indigo-700 font-medium">
+          Paste a bank SMS or statement line. Nothing is saved until you confirm the draft.
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Transaction Text</label>
+          <textarea
+            className="w-full rounded-2xl border-2 border-slate-200 p-4 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 min-h-[120px]"
+            placeholder="Example: Starbucks 23.40 19 Dec"
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+          />
+        </div>
+
+        {parseError && <p className="text-rose-500 text-sm font-bold">{parseError}</p>}
+      </div>
+
+      <button
+        type="submit"
+        disabled={isParsing}
+        className="w-full bg-indigo-600 text-white font-bold text-lg py-4 rounded-2xl shadow-lg shadow-indigo-200 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+        aria-label="Parse transaction"
+      >
+        {isParsing ? 'Parsing…' : 'Parse with AI'}
+      </button>
+    </form>
+  );
+
+  const renderDraftReview = () => (
+    <div className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+      <div className="flex items-center gap-4 mb-4">
+        <button
+          type="button"
+          onClick={() => setView('ai_import')}
+          className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+          aria-label="Go back to import"
+        >
+          <ArrowLeft size={24} />
+        </button>
+        <h2 className="text-xl font-black text-indigo-600">Draft Review</h2>
+      </div>
+
+      {draftConfidence !== null && (
+        <div className="flex items-center justify-between bg-indigo-50 border-2 border-indigo-100 p-4 rounded-2xl mb-4">
+          <div>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Confidence</p>
+            <p className="text-xl font-black text-indigo-700">{Math.round(draftConfidence * 100)}%</p>
+          </div>
+          {draftMissing.length > 0 && (
+            <div className="text-right">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Missing</p>
+              <p className="text-sm font-bold text-amber-600">{draftMissing.join(', ')}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!draftForm ? (
+        <div className="flex-1 flex items-center justify-center text-slate-400 font-bold">
+          No draft to review yet.
+        </div>
+      ) : (
+        <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Type</label>
+              <select
+                value={draftForm.type}
+                onChange={(e) => handleDraftChange('type', e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+              >
+                <option value="expense">Expense</option>
+                <option value="income">Income</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Amount</label>
+              <input
+                type="number"
+                step="0.01"
+                value={draftForm.amount || ''}
+                onChange={(e) => handleDraftChange('amount', e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Merchant</label>
+            <input
+              type="text"
+              value={draftForm.merchant || ''}
+              onChange={(e) => handleDraftChange('merchant', e.target.value)}
+              className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Date</label>
+              <input
+                type="date"
+                value={draftForm.date?.split('T')[0] || ''}
+                onChange={(e) => handleDraftChange('date', e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Category</label>
+              <input
+                type="text"
+                value={draftForm.category || ''}
+                onChange={(e) => handleDraftChange('category', e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Notes</label>
+            <textarea
+              value={draftForm.notes || ''}
+              onChange={(e) => handleDraftChange('notes', e.target.value)}
+              className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700 min-h-[80px]"
+              placeholder="Optional note"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="pt-4 space-y-3">
+        <button
+          onClick={handleConfirmDraft}
+          disabled={!draftForm || !draftForm.amount || draftForm.amount <= 0}
+          className="w-full bg-green-600 text-white font-bold text-lg py-4 rounded-2xl shadow-lg shadow-green-200 active:scale-95 transition-all disabled:opacity-60"
+          aria-label="Confirm draft"
+        >
+          Confirm Draft
+        </button>
+        <button
+          onClick={() => {
+            clearDraft();
+            setDraftForm(null);
+            setView('ai_import');
+          }}
+          className="w-full bg-white text-slate-500 font-bold text-sm py-3 rounded-2xl border-2 border-slate-200 hover:border-slate-300 active:scale-95 transition-transform"
+          aria-label="Reset draft"
+        >
+          Reset
+        </button>
+      </div>
+    </div>
+  );
   const renderDraftReview = () => {
     const draft = pendingTransactions.find(d => d.id === mockDraft.id) ?? mockDraft;
     const formattedDate = draft.date ? new Date(draft.date).toLocaleDateString() : 'Sin fecha';
@@ -1087,6 +1387,8 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         {/* Content */}
         <div className="mt-2 flex-1 overflow-hidden">
           {view === 'menu' ? renderMenu() :
+           view === 'ai_import' ? renderImportForm() :
+           view === 'draft_review' ? renderDraftReview() :
            view === 'transfer' ? renderTransferForm() :
            view === 'regular' ? renderRegularPaymentForm() :
            view === 'withdraw_for_spending' ? renderWithdrawForSpendingForm() :
