@@ -16,6 +16,20 @@ export type SheetView =
   | 'withdraw_for_spending'
   | 'return_unused_cash'
   | 'voice';
+  | 'ai_upload'
+  | 'ai_review';
+  | 'ai_import'
+  | 'draft_review';
+
+export interface TransactionDraft {
+  type: TransactionType;
+  amount: number;
+  merchant?: string;
+  date?: string;
+  category?: ExpenseCategory | IncomeCategory | string;
+  notes?: string;
+}
+export type SheetView = 'menu' | 'income' | 'regular' | 'expense' | 'transfer' | 'withdraw_for_spending' | 'return_unused_cash' | 'draft_review';
 
 export interface Transaction {
   id: string;
@@ -28,6 +42,17 @@ export interface Transaction {
   frequency?: PaymentFrequency;
   irregularity?: Irregularity;
   sourceFundId?: string; // New: 'emergency' or a goal ID, or undefined for availableBalance
+}
+
+export interface TransactionDraft {
+  id: string;
+  type: TransactionType;
+  amount?: number;
+  merchant?: string;
+  date?: string;
+  category?: ExpenseCategory | IncomeCategory;
+  notes?: string;
+  confidence?: number;
 }
 
 export interface Goal {
