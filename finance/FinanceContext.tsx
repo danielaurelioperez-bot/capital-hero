@@ -1,11 +1,12 @@
 import React, { createContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import { 
   Transaction, 
-  TransactionType, 
-  loadEvents, 
+  TransactionType,
+  loadEvents,
   saveEvents,
   SheetView,
-  Goal 
+  Goal,
+  TransactionDraft
 } from './storage';
 import { FinanceEvent, reduceEvents } from './events';
 import { computeStatus, ComputedStatus } from './computeStatus';
@@ -19,6 +20,8 @@ import {
 } from './selectors';
 import { Mission, getActiveMission, getNextMissions } from './missions';
 import { getMissionImpact } from './impact';
+
+const DRAFTS_KEY = 'ch_pending_drafts';
 
 interface FinanceContextType {
   incomes: Transaction[];
@@ -65,13 +68,21 @@ interface FinanceContextType {
   // UI Control
   isSheetOpen: boolean;
   sheetView: SheetView;
-  openSheet: (view?: SheetView) => void;
+  sheetPayload: any;
+  openSheet: (view?: SheetView, payload?: any) => void;
   closeSheet: () => void;
 
   // NEW: Withdraw for Spending Workflow
   lastWithdrawalForSpending: { initialAmount: number; sourceFundId: string; timestamp: number } | null;
   initiateWithdrawalForSpending: (sourceFundId: string, amount: number) => boolean;
   returnUnusedCash: (amountToReturn: number) => boolean;
+
+  // Transaction Drafts
+  pendingTransactions: TransactionDraft[];
+  addDraft: (draft: TransactionDraft) => void;
+  confirmDraft: (id: string) => void;
+  editDraft: (id: string, partial: Partial<TransactionDraft>) => void;
+  discardDraft: (id: string) => void;
 }
 
 export const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
@@ -81,6 +92,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [recentAction, setRecentAction] = useState(false);
   const [daysOffline, setDaysOffline] = useState(0);
   const [impactMsg, setImpactMsg] = useState<string | null>(null);
+  const [pendingTransactions, setPendingTransactions] = useState<TransactionDraft[]>([]);
 
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [sheetView, setSheetView] = useState<SheetView>('menu');
@@ -102,6 +114,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
 
     localStorage.setItem('ch_last_visit', now.toString());
+  }, []);
+
+  useEffect(() => {
+    try {
+      const storedDrafts = localStorage.getItem(DRAFTS_KEY);
+      if (storedDrafts) {
+        const parsed: TransactionDraft[] = JSON.parse(storedDrafts);
+        setPendingTransactions(parsed);
+      }
+    } catch (error) {
+      console.error('Error loading drafts', error);
+    }
   }, []);
 
   const state = useMemo(() => reduceEvents(events), [events]);
@@ -134,6 +158,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const insights = useMemo(() => getProgressInsights(state), [state]);
 
   const nextSteps = useMemo(() => selectNextSteps(state, summary, 5), [state, summary]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAFTS_KEY, JSON.stringify(pendingTransactions));
+    } catch (error) {
+      console.error('Error saving drafts', error);
+    }
+  }, [pendingTransactions]);
 
   const activeMission = useMemo(() => 
     getActiveMission(state, daysOffline, snapshot), 
@@ -359,6 +391,50 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       return true;
   };
 
+  // --- TRANSACTION DRAFTS ---
+
+  const addDraft = (draft: TransactionDraft) => {
+    const draftId = draft.id || crypto.randomUUID();
+    const normalizedDraft = { ...draft, id: draftId } as TransactionDraft;
+    setPendingTransactions(prev => {
+      const existing = prev.filter(d => d.id !== draftId);
+      return [...existing, normalizedDraft];
+    });
+  };
+
+  const editDraft = (id: string, partial: Partial<TransactionDraft>) => {
+    setPendingTransactions(prev => prev.map(d => (d.id === id ? { ...d, ...partial } : d)));
+  };
+
+  const discardDraft = (id: string) => {
+    setPendingTransactions(prev => prev.filter(d => d.id !== id));
+  };
+
+  const mapDraftToTransaction = (draft: TransactionDraft): Omit<Transaction, 'id'> | null => {
+    if (!draft.amount || draft.amount <= 0) return null;
+    const fallbackCategory = draft.type === 'income' ? 'Other' : 'Non-essentials';
+
+    return {
+      amount: draft.amount,
+      type: draft.type,
+      category: (draft.category as any) ?? fallbackCategory,
+      note: draft.notes ?? draft.merchant ?? 'Draft transaction',
+      date: draft.date ?? new Date().toISOString(),
+      recurring: false,
+    };
+  };
+
+  const confirmDraft = (id: string) => {
+    const draft = pendingTransactions.find(d => d.id === id);
+    if (!draft) return;
+
+    const transaction = mapDraftToTransaction(draft);
+    if (!transaction) return;
+
+    addTransaction(transaction);
+    setPendingTransactions(prev => prev.filter(d => d.id !== id));
+  };
+
   // --- NEW: Withdraw for Spending Workflow Actions ---
 
   const initiateWithdrawalForSpending = (sourceFundId: string, amount: number): boolean => {
@@ -473,6 +549,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       lastWithdrawalForSpending, // NEW
       initiateWithdrawalForSpending, // NEW
       returnUnusedCash, // NEW
+      pendingTransactions,
+      addDraft,
+      confirmDraft,
+      editDraft,
+      discardDraft,
     }}>
       {children}
     </FinanceContext.Provider>
