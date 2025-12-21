@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet } from 'lucide-react';
-import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity } from '../hooks/useFinance';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, ListChecks } from 'lucide-react';
+import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity, Transaction, TransactionDraft } from '../hooks/useFinance';
 import { SheetView } from '../finance/storage';
+import DraftList from './DraftList';
+import TransactionModal from './TransactionModal';
 
 interface MoneySheetProps {
   isOpen: boolean;
@@ -11,16 +13,21 @@ interface MoneySheetProps {
 }
 
 const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 'menu', initialPayload }) => {
-  const { 
-    addTransaction, 
-    snapshot, 
-    moveToSavings, 
-    moveToEmergency, 
-    withdrawFromSavings, 
+  const {
+    addTransaction,
+    snapshot,
+    moveToSavings,
+    moveToEmergency,
+    withdrawFromSavings,
     withdrawFromEmergency,
     initiateWithdrawalForSpending, // NEW
     returnUnusedCash, // NEW
     lastWithdrawalForSpending, // NEW
+    drafts,
+    confirmDraft,
+    confirmAllDrafts,
+    markDraftStatus,
+    updateDraft,
   } = useFinance();
   const [view, setView] = useState<SheetView>(initialView);
 
@@ -39,6 +46,10 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
 
   // Withdraw for Spending State
   const [spendingSourceFundId, setSpendingSourceFundId] = useState<string | null>(null);
+
+  // Draft editing state
+  const [draftModalOpen, setDraftModalOpen] = useState(false);
+  const [editingDraft, setEditingDraft] = useState<TransactionDraft | null>(null);
 
   // Initialize date to today on mount
   useEffect(() => {
@@ -97,6 +108,8 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       const timer = setTimeout(() => {
         setView('menu');
         resetForm();
+        setDraftModalOpen(false);
+        setEditingDraft(null);
       }, 300);
       return () => clearTimeout(timer);
     }
@@ -113,6 +126,16 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     setTransferTarget('savings');
     setTransferDirection('deposit'); // Reset transfer direction
     setSpendingSourceFundId(null); // Reset spending source fund
+  };
+
+  const handleDraftEdit = (draft: TransactionDraft) => {
+    setEditingDraft(draft);
+    setDraftModalOpen(true);
+  };
+
+  const handleDraftSave = (data: Omit<Transaction, 'id'>) => {
+    if (!editingDraft) return;
+    updateDraft(editingDraft.id, { ...editingDraft, ...data, status: 'pending' });
   };
 
   const handleViewChange = (newView: SheetView) => {
@@ -278,7 +301,7 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       </button>
 
       {/* Withdraw for Spending (Moved to bottom as less frequent) */}
-      <button 
+      <button
         onClick={() => handleViewChange('withdraw_for_spending')}
         className="w-full bg-red-50 border-2 border-red-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Withdraw money for spending from a specific fund"
@@ -294,6 +317,55 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         </div>
         <ChevronRight className="text-red-300 group-hover:text-red-500 transition-colors" />
       </button>
+
+      {/* Review drafts */}
+      <button
+        onClick={() => handleViewChange('drafts')}
+        className="w-full bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Review imported drafts"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-amber-100 p-3 rounded-xl text-amber-600">
+            <ListChecks size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Review Drafts</span>
+            <span className="text-xs font-medium text-slate-500">Confirm AI imports</span>
+          </div>
+        </div>
+        <ChevronRight className="text-amber-300 group-hover:text-amber-500 transition-colors" />
+      </button>
+    </div>
+  );
+
+  const renderDraftsView = () => (
+    <div className="flex flex-col h-full space-y-4 animate-in slide-in-from-right-8 duration-300">
+      <div className="flex items-center gap-4 mb-2">
+        <button
+          type="button"
+          onClick={() => setView('menu')}
+          className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+          aria-label="Go back to menu"
+        >
+          <ArrowLeft size={24} />
+        </button>
+        <h2 className="text-xl font-black text-amber-700">Imported Drafts</h2>
+      </div>
+
+      <p className="text-sm font-medium text-slate-500">
+        AI batches stay in draft mode until you confirm them. Pending drafts do not impact your Safe to Spend.
+      </p>
+
+      <DraftList
+        drafts={drafts}
+        title="Drafts inside MoneySheet"
+        onConfirm={(id) => confirmDraft(id)}
+        onEdit={(draft) => handleDraftEdit(draft)}
+        onPending={(id) => markDraftStatus(id, 'pending')}
+        onDiscard={(id) => markDraftStatus(id, 'discarded')}
+        onConfirmAll={drafts.some((d) => d.status === 'pending') ? confirmAllDrafts : undefined}
+        compact
+      />
     </div>
   );
 
@@ -959,14 +1031,45 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
 
         {/* Content */}
         <div className="mt-2 flex-1 overflow-hidden">
-          {view === 'menu' ? renderMenu() : 
-           view === 'transfer' ? renderTransferForm() : 
-           view === 'regular' ? renderRegularPaymentForm() : 
+          {view === 'menu' ? renderMenu() :
+           view === 'transfer' ? renderTransferForm() :
+           view === 'regular' ? renderRegularPaymentForm() :
            view === 'withdraw_for_spending' ? renderWithdrawForSpendingForm() :
            view === 'return_unused_cash' ? renderReturnUnusedCashForm() :
+           view === 'drafts' ? renderDraftsView() :
            renderStandardForm()}
         </div>
       </div>
+
+      <TransactionModal
+        isOpen={draftModalOpen}
+        onClose={() => {
+          setDraftModalOpen(false);
+          setEditingDraft(null);
+        }}
+        onSave={(data) => {
+          handleDraftSave(data);
+          setDraftModalOpen(false);
+          setEditingDraft(null);
+        }}
+        initialType={editingDraft?.type || 'expense'}
+        initialData={
+          editingDraft
+            ? {
+                id: editingDraft.id,
+                amount: editingDraft.amount,
+                type: editingDraft.type,
+                category: editingDraft.category,
+                note: editingDraft.note,
+                date: editingDraft.date,
+                recurring: editingDraft.recurring,
+                frequency: editingDraft.frequency,
+                irregularity: editingDraft.irregularity,
+                sourceFundId: editingDraft.sourceFundId,
+              }
+            : undefined
+        }
+      />
     </div>
   );
 };

@@ -1,11 +1,16 @@
 import React, { createContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
-import { 
-  Transaction, 
-  TransactionType, 
-  loadEvents, 
+import {
+  Transaction,
+  TransactionType,
+  loadEvents,
   saveEvents,
   SheetView,
-  Goal 
+  Goal,
+  TransactionDraft,
+  TransactionDraftSeed,
+  loadDrafts,
+  saveDrafts,
+  DraftStatus
 } from './storage';
 import { FinanceEvent, reduceEvents } from './events';
 import { computeStatus, ComputedStatus } from './computeStatus';
@@ -23,9 +28,15 @@ import { getMissionImpact } from './impact';
 interface FinanceContextType {
   incomes: Transaction[];
   expenses: Transaction[];
+  drafts: TransactionDraft[];
   addTransaction: (t: Omit<Transaction, 'id'>) => void;
   deleteTransaction: (id: string, type: TransactionType) => void;
   editTransaction: (t: Transaction) => void;
+  ingestDrafts: (drafts: TransactionDraftSeed[]) => void;
+  updateDraft: (id: string, updates: Partial<TransactionDraftSeed> & { status?: DraftStatus }) => void;
+  markDraftStatus: (id: string, status: DraftStatus) => void;
+  confirmDraft: (id: string) => void;
+  confirmAllDrafts: () => void;
   summary: ComputedStatus;
   snapshot: FinanceSnapshot;
   insights: ProgressInsights;
@@ -82,6 +93,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [daysOffline, setDaysOffline] = useState(0);
   const [impactMsg, setImpactMsg] = useState<string | null>(null);
 
+  const [drafts, setDrafts] = useState<TransactionDraft[]>([]);
+
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [sheetView, setSheetView] = useState<SheetView>('menu');
   const [sheetPayload, setSheetPayload] = useState<any>(null);
@@ -90,6 +103,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const loadedEvents = loadEvents();
     // Backward compatibility: If loaded events don't have id/timestamp, we might need to patch them (optional for MVP)
     setEvents(loadedEvents);
+    const existingDrafts = loadDrafts().map((draft) => ({
+      ...draft,
+      status: draft.status ?? 'pending',
+    }));
+    setDrafts(existingDrafts);
 
     const now = Date.now();
     const lastVisit = localStorage.getItem('ch_last_visit');
@@ -103,6 +121,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     localStorage.setItem('ch_last_visit', now.toString());
   }, []);
+
+  useEffect(() => {
+    saveDrafts(drafts);
+  }, [drafts]);
 
   const state = useMemo(() => reduceEvents(events), [events]);
   const { incomes, expenses, xp, lastWithdrawalForSpending } = state;
@@ -174,8 +196,63 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       setRecentAction(false);
       setImpactMsg(null); 
     }, 2500); 
-    
-    setDaysOffline(0); 
+
+    setDaysOffline(0);
+  };
+
+  const ingestDrafts = (incomingDrafts: TransactionDraftSeed[]) => {
+    const normalized = incomingDrafts.map((draft) => ({
+      ...draft,
+      id: crypto.randomUUID(),
+      status: 'pending' as DraftStatus,
+    }));
+
+    setDrafts((prev) => [...normalized, ...prev]);
+  };
+
+  const updateDraft = (id: string, updates: Partial<TransactionDraftSeed> & { status?: DraftStatus }) => {
+    setDrafts((prev) =>
+      prev.map((draft) =>
+        draft.id === id
+          ? {
+              ...draft,
+              ...updates,
+              status: updates.status ?? draft.status,
+            }
+          : draft
+      )
+    );
+  };
+
+  const markDraftStatus = (id: string, status: DraftStatus) => {
+    updateDraft(id, { status });
+  };
+
+  const confirmDraft = (id: string) => {
+    const target = drafts.find((draft) => draft.id === id);
+    if (!target || target.status === 'discarded') return;
+
+    const { status, confidence, sourceName, id: _draftId, ...txData } = target;
+
+    dispatch({
+      type: 'ADD_TRANSACTION',
+      payload: { ...txData, id: crypto.randomUUID() },
+    });
+
+    markDraftStatus(id, 'confirmed');
+  };
+
+  const confirmAllDrafts = () => {
+    const pendingDrafts = drafts.filter((draft) => draft.status === 'pending');
+    pendingDrafts.forEach((draft) => {
+      const { status, confidence, sourceName, id: _draftId, ...txData } = draft;
+      dispatch({
+        type: 'ADD_TRANSACTION',
+        payload: { ...txData, id: crypto.randomUUID() },
+      });
+    });
+
+    setDrafts((prev) => prev.map((draft) => (draft.status === 'pending' ? { ...draft, status: 'confirmed' } : draft)));
   };
 
   const undoLastAction = () => {
@@ -432,15 +509,21 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   return (
-    <FinanceContext.Provider value={{ 
-      incomes, 
-      expenses, 
+    <FinanceContext.Provider value={{
+      incomes,
+      expenses,
+      drafts,
       xp,
       level,
       nextLevelXp,
-      addTransaction, 
-      deleteTransaction, 
-      editTransaction, 
+      addTransaction,
+      deleteTransaction,
+      editTransaction,
+      ingestDrafts,
+      updateDraft,
+      markDraftStatus,
+      confirmDraft,
+      confirmAllDrafts,
       completeMission,
       skipMission,
       moveToSavings,

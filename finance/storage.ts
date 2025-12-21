@@ -7,7 +7,35 @@ export type PaymentFrequency = 'weekly' | 'biweekly' | 'monthly' | 'irregular';
 export type Irregularity = 'about_weekly' | 'about_monthly' | 'few_times_year';
 
 // UI Types shared across components
-export type SheetView = 'menu' | 'income' | 'regular' | 'expense' | 'transfer' | 'withdraw_for_spending' | 'return_unused_cash';
+export type SheetView =
+  | 'menu'
+  | 'income'
+  | 'regular'
+  | 'expense'
+  | 'transfer'
+  | 'withdraw_for_spending'
+  | 'return_unused_cash'
+  | 'drafts';
+
+export type DraftStatus = 'pending' | 'confirmed' | 'discarded';
+
+export interface TransactionDraft {
+  id: string;
+  amount: number;
+  type: TransactionType;
+  category: ExpenseCategory | IncomeCategory;
+  note: string;
+  date: string; // ISO string
+  recurring: boolean;
+  frequency?: PaymentFrequency;
+  irregularity?: Irregularity;
+  sourceFundId?: string;
+  confidence?: number;
+  status: DraftStatus;
+  sourceName?: string;
+}
+
+export type TransactionDraftSeed = Omit<TransactionDraft, 'id' | 'status'>;
 
 export interface Transaction {
   id: string;
@@ -38,6 +66,7 @@ export interface MissionHistoryEntry {
 }
 
 const KEY_EVENTS = 'ch_events_log';
+const KEY_DRAFTS = 'ch_transaction_drafts';
 
 // Deprecated: legacy state loading
 const KEY_INCOMES = 'ch_incomes';
@@ -59,6 +88,25 @@ export const saveEvents = (events: FinanceEvent[]) => {
     localStorage.setItem(KEY_EVENTS, JSON.stringify(events));
   } catch (error) {
     console.error("Error saving events:", error);
+  }
+};
+
+export const loadDrafts = (): TransactionDraft[] => {
+  try {
+    const draftsJson = localStorage.getItem(KEY_DRAFTS);
+    if (!draftsJson) return [];
+    return JSON.parse(draftsJson);
+  } catch (error) {
+    console.error('Error loading drafts:', error);
+    return [];
+  }
+};
+
+export const saveDrafts = (drafts: TransactionDraft[]) => {
+  try {
+    localStorage.setItem(KEY_DRAFTS, JSON.stringify(drafts));
+  } catch (error) {
+    console.error('Error saving drafts:', error);
   }
 };
 
