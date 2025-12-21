@@ -4,6 +4,18 @@ import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregula
 import { SheetView } from '../finance/storage';
 import DraftList from './DraftList';
 import TransactionModal from './TransactionModal';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Mic, MicOff, Loader2, Wand2, RotateCcw, Sparkles } from 'lucide-react';
+import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity } from '../hooks/useFinance';
+import { SheetView } from '../finance/storage';
+import { parseTransactionDraft, ParsedTransactionDraft } from '../finance/ai';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Upload, Loader2, AlertTriangle } from 'lucide-react';
+import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity, TransactionType } from '../hooks/useFinance';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet } from 'lucide-react';
+import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity, TransactionDraft } from '../hooks/useFinance';
+import { SheetView } from '../finance/storage';
+import { requestTransactionDraft, type ParseTransactionResponse } from '../finance/aiClient';
 
 interface MoneySheetProps {
   isOpen: boolean;
@@ -17,6 +29,12 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     addTransaction,
     snapshot,
     moveToSavings,
+  const CONFIDENCE_THRESHOLD = 0.65;
+  const {
+    addTransaction,
+    snapshot, 
+    moveToSavings, 
+    moveToEmergency, 
     moveToEmergency,
     withdrawFromSavings,
     withdrawFromEmergency,
@@ -28,8 +46,27 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     confirmAllDrafts,
     markDraftStatus,
     updateDraft,
+    addDraft,
+    clearDraft,
+    draft,
+    pendingTransactions,
+    addDraft,
+    confirmDraft,
+    editDraft,
+    discardDraft,
   } = useFinance();
   const [view, setView] = useState<SheetView>(initialView);
+
+  const mockDraft = useMemo<TransactionDraft>(() => ({
+    id: 'draft-mock-1',
+    type: 'expense',
+    amount: 18.75,
+    merchant: 'Café Central',
+    category: 'Non-essentials',
+    date: new Date().toISOString(),
+    notes: 'Cortado + snack rápido',
+    confidence: 0.64,
+  }), []);
 
   // Form State
   const [amount, setAmount] = useState('');
@@ -50,11 +87,36 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
   // Draft editing state
   const [draftModalOpen, setDraftModalOpen] = useState(false);
   const [editingDraft, setEditingDraft] = useState<TransactionDraft | null>(null);
+  // Voice Capture State
+  const [transcript, setTranscript] = useState('');
+  const [draft, setDraft] = useState<ParsedTransactionDraft | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const recognitionRef = React.useRef<SpeechRecognition | null>(null);
+  // AI Draft State
+  const [aiDraft, setAiDraft] = useState<ParseTransactionResponse | null>(null);
+  const [aiDraftType, setAiDraftType] = useState<TransactionType>('expense');
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  // AI Import State
+  const [importText, setImportText] = useState('');
+  const [draftConfidence, setDraftConfidence] = useState<number | null>(null);
+  const [draftMissing, setDraftMissing] = useState<string[]>([]);
+  const [draftForm, setDraftForm] = useState<TransactionDraft | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const [parseError, setParseError] = useState('');
 
   // Initialize date to today on mount
   useEffect(() => {
     setDate(new Date().toISOString().split('T')[0]);
   }, []);
+
+  useEffect(() => {
+    if (draft) {
+      setDraftForm(draft);
+    }
+  }, [draft]);
 
   // Update view when initialView changes (e.g., opened from Missions or Finances)
   useEffect(() => {
@@ -99,8 +161,14 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
           if (i.category) setCategory(i.category);
         }
       }
+      if (initialView === 'draft_review') {
+        const exists = pendingTransactions.some(draft => draft.id === mockDraft.id);
+        if (!exists) {
+          addDraft(mockDraft);
+        }
+      }
     }
-  }, [isOpen, initialView, lastWithdrawalForSpending, snapshot.availableBalance]); // Add new dependencies
+  }, [isOpen, initialView, lastWithdrawalForSpending, snapshot.availableBalance, pendingTransactions, addDraft, mockDraft]); // Add new dependencies
 
   // Reset view and form when closed
   useEffect(() => {
@@ -115,6 +183,15 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (view === 'ai_review') {
+      const allowedCategories = (aiDraftType === 'income' ? incomeCategories : expenseCategories) as string[];
+      if (!allowedCategories.includes(category)) {
+        setCategory(allowedCategories[0] || '');
+      }
+    }
+  }, [aiDraftType, view]);
+
   const resetForm = () => {
     setAmount('');
     setNote('');
@@ -126,6 +203,22 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     setTransferTarget('savings');
     setTransferDirection('deposit'); // Reset transfer direction
     setSpendingSourceFundId(null); // Reset spending source fund
+    setTranscript('');
+    setDraft(null);
+    setVoiceError(null);
+    setIsParsing(false);
+    setIsListening(false);
+    setAiDraft(null);
+    setAiDraftType('expense');
+    setAiError(null);
+    setAiLoading(false);
+    setImportText('');
+    setDraftConfidence(null);
+    setDraftMissing([]);
+    setDraftForm(null);
+    setIsParsing(false);
+    setParseError('');
+    clearDraft();
   };
 
   const handleDraftEdit = (draft: TransactionDraft) => {
@@ -162,6 +255,119 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     }
   };
 
+  const handleReceiptUpload = async (file?: File | null) => {
+    if (!file) return;
+    setAiError(null);
+    setAiLoading(true);
+    try {
+      const parsed = await requestTransactionDraft(file);
+      setAiDraft(parsed);
+      const draftType = parsed.draft.type || 'expense';
+      setAiDraftType(draftType);
+      setAmount(parsed.draft.amount !== undefined ? String(parsed.draft.amount) : '');
+      setNote(parsed.draft.merchant || parsed.draft.note || '');
+      setDate(parsed.draft.date ? parsed.draft.date.slice(0, 10) : new Date().toISOString().split('T')[0]);
+      setCategory(
+        parsed.draft.category ||
+          (draftType === 'income'
+            ? 'Salary'
+            : 'Essentials'),
+      );
+      setView('ai_review');
+    } catch (error) {
+      setAiError((error as Error).message || 'No pudimos leer el recibo. Intenta otra imagen.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const normalizeCategory = (cat: string | undefined, type: 'income' | 'expense'): ExpenseCategory | IncomeCategory => {
+    if (!cat) return type === 'income' ? 'Other' : 'Essentials';
+    const c = cat.toLowerCase();
+    if (['lifestyle', 'non-essentials', 'non essentials'].some((t) => c.includes(t))) return 'Non-essentials';
+    if (['toxic', 'impulse'].some((t) => c.includes(t))) return 'Toxic';
+    if (['debt', 'loan', 'credit'].some((t) => c.includes(t))) return 'Debt';
+    if (['savings', 'save'].some((t) => c.includes(t))) return 'Savings';
+    if (['salary', 'paycheck', 'pay day'].some((t) => c.includes(t))) return 'Salary';
+    if (['freelance', 'contract', 'side'].some((t) => c.includes(t))) return 'Freelance';
+    if (['bonus'].some((t) => c.includes(t))) return 'Bonus';
+    if (['essentials', 'need'].some((t) => c.includes(t))) return 'Essentials';
+    return type === 'income' ? 'Other' : 'Essentials';
+  };
+
+  const handleParseTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!importText.trim()) {
+      setParseError('Paste a transaction description first.');
+      return;
+    }
+
+    setIsParsing(true);
+    setParseError('');
+
+    try {
+      const response = await fetch('/api/ai/parse-transaction', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: importText,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to parse transaction.');
+      }
+
+      const data = await response.json();
+      const parsedDraft: TransactionDraft = {
+        type: data?.draft?.type === 'income' ? 'income' : 'expense',
+        amount: Number(data?.draft?.amount) || 0,
+        merchant: data?.draft?.merchant || '',
+        date: data?.draft?.date || new Date().toISOString().split('T')[0],
+        category: data?.draft?.category || '',
+        notes: data?.draft?.notes || '',
+      };
+
+      setDraftConfidence(typeof data?.confidence === 'number' ? data.confidence : null);
+      setDraftMissing(Array.isArray(data?.missing) ? data.missing : []);
+      addDraft(parsedDraft);
+      setDraftForm(parsedDraft);
+      setView('draft_review');
+    } catch (error: any) {
+      setParseError(error?.message || 'Could not parse transaction.');
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleDraftChange = (field: keyof TransactionDraft, value: string) => {
+    if (!draftForm) return;
+    const updated: TransactionDraft = {
+      ...draftForm,
+      [field]: field === 'amount' ? Number(value) : value,
+    };
+    setDraftForm(updated);
+    addDraft(updated);
+  };
+
+  const handleConfirmDraft = () => {
+    if (!draftForm || !draftForm.amount || draftForm.amount <= 0) return;
+    const normalizedCategory = normalizeCategory(draftForm.category as string | undefined, draftForm.type);
+
+    addTransaction({
+      amount: Math.abs(Number(draftForm.amount)),
+      type: draftForm.type,
+      category: normalizedCategory as any,
+      note: draftForm.notes || draftForm.merchant || 'Imported transaction',
+      date: new Date(draftForm.date || new Date().toISOString().split('T')[0]).toISOString(),
+      recurring: false,
+    });
+
+    clearDraft();
+    resetForm();
+    onClose();
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!amount) return;
@@ -195,6 +401,17 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         } else {
           // Error handling inside returnUnusedCash
         }
+    } else if (view === 'ai_review') {
+        const type = aiDraftType;
+        if (!category) return;
+        addTransaction({
+            amount: numAmount,
+            type,
+            category: category as any,
+            note,
+            date: new Date(date).toISOString(),
+            recurring: false,
+        });
     } else {
         const type = view === 'income' ? 'income' : 'expense';
         addTransaction({
@@ -212,6 +429,21 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     onClose();
   };
 
+  const handleConfirmDraft = () => {
+    if (!draft || !draft.amount) return;
+    const txDate = draft.date ? new Date(draft.date) : new Date();
+    addTransaction({
+      amount: draft.amount,
+      type: draft.type,
+      category: draft.category as any,
+      note: draft.note || 'Registro por voz',
+      date: txDate.toISOString(),
+      recurring: Boolean(draft.recurring),
+      frequency: draft.recurring ? 'monthly' : undefined,
+    });
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   const incomeCategories: IncomeCategory[] = ['Salary', 'Freelance', 'Bonus', 'Other'];
@@ -224,12 +456,90 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       return cat;
   };
 
+  const updateDraft = (changes: Partial<ParsedTransactionDraft>) => {
+    setDraft((prev) => (prev ? { ...prev, ...changes } : prev));
+  };
+
+  const handleParseTranscript = async (text: string) => {
+    if (!text.trim()) {
+      setVoiceError('Necesitas decir o escribir el gasto/ingreso primero.');
+      return;
+    }
+    setIsParsing(true);
+    setVoiceError(null);
+    try {
+      const parsed = await parseTransactionDraft(text);
+      setDraft(parsed);
+    } catch (error) {
+      setVoiceError('No pude crear el borrador. Inténtalo de nuevo.');
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const startListening = () => {
+    const SpeechRecognitionClass =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionClass) {
+      setVoiceError('Tu navegador no permite captura de voz. Usa el texto rápido.');
+      return;
+    }
+
+    const recognition: any = new SpeechRecognitionClass();
+    recognition.lang = 'es-ES';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: any) => {
+      const spoken = event.results[0][0].transcript;
+      setTranscript(spoken);
+      handleParseTranscript(spoken);
+    };
+
+    recognition.onerror = () => {
+      setVoiceError('No logré escucharte. Prueba de nuevo.');
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    setIsListening(true);
+    recognition.start();
+    recognitionRef.current = recognition as any;
+  };
+
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    setIsListening(false);
+  };
+
   const renderMenu = () => (
     <div className="space-y-4 animate-in slide-in-from-bottom-8 duration-300">
       <h2 className="text-xl font-black text-slate-800 text-center mb-6">Select Action</h2>
-      
+
+      {/* Import via AI */}
+      <button
+        onClick={() => handleViewChange('ai_import')}
+        className="w-full bg-indigo-50 border-2 border-indigo-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Import a transaction"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-indigo-100 p-3 rounded-xl text-indigo-600">
+            <Sparkles size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Import</span>
+            <span className="text-xs font-medium text-slate-500">Paste a bank SMS or statement line</span>
+          </div>
+        </div>
+        <ChevronRight className="text-indigo-300 group-hover:text-indigo-500 transition-colors" />
+      </button>
+
       {/* Add Expense (Moved to top as most frequent) */}
-      <button 
+      <button
         onClick={() => handleViewChange('expense')}
         className="w-full bg-rose-50 border-2 border-rose-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Add new expense"
@@ -247,7 +557,7 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       </button>
 
       {/* Add Income */}
-      <button 
+      <button
         onClick={() => handleViewChange('income')}
         className="w-full bg-green-50 border-2 border-green-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Add new income"
@@ -264,8 +574,39 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         <ChevronRight className="text-green-300 group-hover:text-green-500 transition-colors" />
       </button>
 
+      {/* Voice Capture */}
+      <button
+        onClick={() => handleViewChange('voice')}
+        className="w-full bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Add using voice"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-amber-100 p-3 rounded-xl text-amber-600">
+            <Mic size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Registrar por voz</span>
+            <span className="text-xs font-medium text-slate-500">Habla y revisa el borrador guiado</span>
+      {/* Upload Receipt */}
+      <button
+        onClick={() => handleViewChange('ai_upload')}
+        className="w-full bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Upload receipt for AI draft"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-amber-100 p-3 rounded-xl text-amber-600">
+            <Upload size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Upload receipt</span>
+            <span className="text-xs font-medium text-slate-500">AI drafts, you confirm</span>
+          </div>
+        </div>
+        <ChevronRight className="text-amber-300 group-hover:text-amber-500 transition-colors" />
+      </button>
+
       {/* Add a Regular Payment */}
-      <button 
+      <button
         onClick={() => handleViewChange('regular')}
         className="w-full bg-indigo-50 border-2 border-indigo-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Add a regular payment"
@@ -331,6 +672,19 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
           <div className="text-left">
             <span className="block text-lg font-bold text-slate-800">Review Drafts</span>
             <span className="text-xs font-medium text-slate-500">Confirm AI imports</span>
+      {/* Draft Review */}
+      <button
+        onClick={() => handleViewChange('draft_review')}
+        className="w-full bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Review a pending draft"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-amber-100 p-3 rounded-xl text-amber-600">
+            <Info size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Draft Review</span>
+            <span className="text-xs font-medium text-slate-500">Check a pending transaction</span>
           </div>
         </div>
         <ChevronRight className="text-amber-300 group-hover:text-amber-500 transition-colors" />
@@ -341,6 +695,9 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
   const renderDraftsView = () => (
     <div className="flex flex-col h-full space-y-4 animate-in slide-in-from-right-8 duration-300">
       <div className="flex items-center gap-4 mb-2">
+  const renderImportForm = () => (
+    <form onSubmit={handleParseTransaction} className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+      <div className="flex items-center gap-4 mb-6">
         <button
           type="button"
           onClick={() => setView('menu')}
@@ -366,8 +723,474 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         onConfirmAll={drafts.some((d) => d.status === 'pending') ? confirmAllDrafts : undefined}
         compact
       />
+        <h2 className="text-xl font-black text-indigo-600">Import Transaction</h2>
+      </div>
+
+      <div className="space-y-4 flex-1">
+        <div className="p-4 bg-indigo-50 border-2 border-indigo-100 rounded-2xl text-sm text-indigo-700 font-medium">
+          Paste a bank SMS or statement line. Nothing is saved until you confirm the draft.
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Transaction Text</label>
+          <textarea
+            className="w-full rounded-2xl border-2 border-slate-200 p-4 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 min-h-[120px]"
+            placeholder="Example: Starbucks 23.40 19 Dec"
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+          />
+        </div>
+
+        {parseError && <p className="text-rose-500 text-sm font-bold">{parseError}</p>}
+      </div>
+
+      <button
+        type="submit"
+        disabled={isParsing}
+        className="w-full bg-indigo-600 text-white font-bold text-lg py-4 rounded-2xl shadow-lg shadow-indigo-200 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+        aria-label="Parse transaction"
+      >
+        {isParsing ? 'Parsing…' : 'Parse with AI'}
+      </button>
+    </form>
+  );
+
+  const renderDraftReview = () => (
+    <div className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+      <div className="flex items-center gap-4 mb-4">
+        <button
+          type="button"
+          onClick={() => setView('ai_import')}
+          className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+          aria-label="Go back to import"
+        >
+          <ArrowLeft size={24} />
+        </button>
+        <h2 className="text-xl font-black text-indigo-600">Draft Review</h2>
+      </div>
+
+      {draftConfidence !== null && (
+        <div className="flex items-center justify-between bg-indigo-50 border-2 border-indigo-100 p-4 rounded-2xl mb-4">
+          <div>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Confidence</p>
+            <p className="text-xl font-black text-indigo-700">{Math.round(draftConfidence * 100)}%</p>
+          </div>
+          {draftMissing.length > 0 && (
+            <div className="text-right">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Missing</p>
+              <p className="text-sm font-bold text-amber-600">{draftMissing.join(', ')}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!draftForm ? (
+        <div className="flex-1 flex items-center justify-center text-slate-400 font-bold">
+          No draft to review yet.
+        </div>
+      ) : (
+        <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Type</label>
+              <select
+                value={draftForm.type}
+                onChange={(e) => handleDraftChange('type', e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+              >
+                <option value="expense">Expense</option>
+                <option value="income">Income</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Amount</label>
+              <input
+                type="number"
+                step="0.01"
+                value={draftForm.amount || ''}
+                onChange={(e) => handleDraftChange('amount', e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Merchant</label>
+            <input
+              type="text"
+              value={draftForm.merchant || ''}
+              onChange={(e) => handleDraftChange('merchant', e.target.value)}
+              className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Date</label>
+              <input
+                type="date"
+                value={draftForm.date?.split('T')[0] || ''}
+                onChange={(e) => handleDraftChange('date', e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Category</label>
+              <input
+                type="text"
+                value={draftForm.category || ''}
+                onChange={(e) => handleDraftChange('category', e.target.value)}
+                className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Notes</label>
+            <textarea
+              value={draftForm.notes || ''}
+              onChange={(e) => handleDraftChange('notes', e.target.value)}
+              className="w-full rounded-xl border-2 border-slate-200 p-3 text-sm font-bold text-slate-700 min-h-[80px]"
+              placeholder="Optional note"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="pt-4 space-y-3">
+        <button
+          onClick={handleConfirmDraft}
+          disabled={!draftForm || !draftForm.amount || draftForm.amount <= 0}
+          className="w-full bg-green-600 text-white font-bold text-lg py-4 rounded-2xl shadow-lg shadow-green-200 active:scale-95 transition-all disabled:opacity-60"
+          aria-label="Confirm draft"
+        >
+          Confirm Draft
+        </button>
+        <button
+          onClick={() => {
+            clearDraft();
+            setDraftForm(null);
+            setView('ai_import');
+          }}
+          className="w-full bg-white text-slate-500 font-bold text-sm py-3 rounded-2xl border-2 border-slate-200 hover:border-slate-300 active:scale-95 transition-transform"
+          aria-label="Reset draft"
+        >
+          Reset
+        </button>
+      </div>
     </div>
   );
+  const renderDraftReview = () => {
+    const draft = pendingTransactions.find(d => d.id === mockDraft.id) ?? mockDraft;
+    const formattedDate = draft.date ? new Date(draft.date).toLocaleDateString() : 'Sin fecha';
+    const potentialImpact = draft.amount ? draft.amount.toFixed(2) : '0.00';
+
+    return (
+      <div className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            type="button"
+            onClick={() => setView('menu')}
+            className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+            aria-label="Go back to menu"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <div>
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-wider">Draft Review</p>
+            <h2 className="text-xl font-black text-slate-800">Transaction Draft</h2>
+          </div>
+        </div>
+
+        <div className="space-y-4 flex-1 overflow-y-auto pb-4">
+          <div className="bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl space-y-2">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Merchant</p>
+                <p className="text-lg font-black text-slate-800">{draft.merchant || 'Unknown merchant'}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Amount</p>
+                <p className="text-2xl font-black text-rose-600">-${draft.amount?.toFixed(2) || '0.00'}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-sm text-slate-600">
+              <div className="bg-white border border-slate-100 rounded-xl p-3">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Category</p>
+                <p className="font-semibold">{getCategoryLabel(draft.category || 'Non-essentials')}</p>
+              </div>
+              <div className="bg-white border border-slate-100 rounded-xl p-3">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Date</p>
+                <p className="font-semibold">{formattedDate}</p>
+              </div>
+            </div>
+            <div className="bg-white border border-slate-100 rounded-xl p-3">
+              <p className="text-[10px] font-bold text-slate-400 uppercase">Notes</p>
+              <p className="font-semibold text-slate-700">{draft.notes || 'No notes added'}</p>
+            </div>
+          </div>
+
+          <div className="bg-amber-50 border-2 border-amber-100 rounded-2xl p-4 space-y-1">
+            <p className="text-xs font-bold text-amber-700 uppercase tracking-wider">Potential impact</p>
+            <p className="text-sm font-semibold text-amber-800">This draft may reduce Safe to Spend by ${potentialImpact}. It is not counted until you confirm.</p>
+            <p className="text-[11px] text-amber-700">Confidence score: {(draft.confidence ?? 0).toFixed(2)}</p>
+          </div>
+        </div>
+
+        <div className="space-y-2 mt-auto">
+          <button
+            className="w-full bg-emerald-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-emerald-100 active:scale-95 transition-all"
+            onClick={() => { confirmDraft(draft.id); onClose(); }}
+          >
+            Confirmar
+          </button>
+          <button
+            className="w-full bg-white text-slate-800 font-bold py-4 rounded-2xl border-2 border-slate-200 active:scale-95 transition-all"
+            onClick={() => editDraft(draft.id, { notes: draft.notes ? `${draft.notes} (editado)` : 'Nota editada' })}
+          >
+            Editar
+          </button>
+          <button
+            className="w-full bg-white text-amber-700 font-bold py-4 rounded-2xl border-2 border-amber-200 active:scale-95 transition-all"
+            onClick={() => addDraft(draft)}
+          >
+            Pendiente
+          </button>
+          <button
+            className="w-full bg-white text-rose-700 font-bold py-4 rounded-2xl border-2 border-rose-200 active:scale-95 transition-all"
+            onClick={() => { discardDraft(draft.id); onClose(); }}
+          >
+            Descartar
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderVoiceFlow = () => {
+    const categories = draft?.type === 'income' ? incomeCategories : expenseCategories;
+
+    return (
+      <div className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            type="button"
+            onClick={() => setView('menu')}
+            className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+            aria-label="Go back to menu"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-wide text-amber-500">Modo rápido</p>
+            <h2 className="text-xl font-black text-slate-800">Registrar por voz</h2>
+          </div>
+        </div>
+
+        <div className="space-y-4 flex-1 overflow-y-auto pb-4">
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 via-white to-amber-50 border-2 border-amber-100">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="bg-amber-100 p-2 rounded-xl text-amber-600">
+                <Sparkles size={18} />
+              </div>
+              <div>
+                <p className="text-xs font-black text-amber-700">Coach</p>
+                <p className="text-sm font-semibold text-slate-700">Di el monto y la categoría. Yo armo el borrador.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={isListening ? stopListening : startListening}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${
+                  isListening ? 'bg-rose-600 text-white shadow-lg shadow-rose-100' : 'bg-amber-500 text-white shadow-lg shadow-amber-100'
+                }`}
+                aria-label={isListening ? 'Stop listening' : 'Start listening'}
+              >
+                {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                {isListening ? 'Escuchando...' : 'Grabar voz'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTranscript('');
+                  setDraft(null);
+                  setVoiceError(null);
+                }}
+                className="px-3 py-3 rounded-xl font-bold text-sm border-2 border-slate-200 text-slate-500 hover:border-slate-300 active:scale-95"
+                aria-label="Reset voice draft"
+              >
+                <RotateCcw size={16} />
+              </button>
+            </div>
+            {voiceError && (
+              <p className="text-xs font-semibold text-rose-600 mt-3">{voiceError}</p>
+            )}
+          </div>
+
+          <div className="bg-white border-2 border-slate-100 rounded-2xl p-4 space-y-3 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black text-slate-400 uppercase">Texto reconocido</p>
+                <p className="text-sm font-bold text-slate-800">Dijiste:</p>
+              </div>
+              {isParsing && <Loader2 className="animate-spin text-amber-500" size={18} />}
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm font-semibold text-slate-700 min-h-[48px]">
+              {transcript || 'Aún no hay texto. Presiona grabar.'}
+            </div>
+            <div className="space-y-2">
+              <label className="text-[11px] font-black text-slate-400 uppercase">Editar texto rápido</label>
+              <textarea
+                value={transcript}
+                onChange={(e) => setTranscript(e.target.value)}
+                className="w-full border-2 border-slate-100 rounded-xl p-3 text-sm font-semibold text-slate-700 focus:border-amber-300 focus:outline-none"
+                rows={2}
+                placeholder="Ej. Gasté 25 en café"
+              />
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => handleParseTranscript(transcript)}
+                disabled={isParsing}
+                className="flex-1 bg-slate-900 text-white font-bold text-sm py-3 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                aria-label="Parse voice text"
+              >
+                <Wand2 size={16} /> Generar borrador
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('expense')}
+                className="px-3 py-3 rounded-xl font-bold text-sm border-2 border-slate-200 text-slate-500 hover:border-slate-300 active:scale-95"
+                aria-label="Switch to manual form"
+              >
+                Manual
+              </button>
+            </div>
+          </div>
+
+          {draft ? (
+            <div className="bg-white border-2 border-amber-200 rounded-2xl p-4 space-y-4 shadow-md">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[11px] font-black text-amber-500 uppercase">Borrador listo</p>
+                  <p className="text-lg font-black text-slate-800">Revisa y confirma</p>
+                </div>
+                <Check className="text-amber-500" size={20} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => updateDraft({ type: 'expense' })}
+                  className={`p-3 rounded-xl border-2 text-sm font-bold transition-all ${
+                    draft.type === 'expense'
+                      ? 'bg-rose-50 border-rose-400 text-rose-700'
+                      : 'border-slate-200 text-slate-500'
+                  }`}
+                >
+                  Gasto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateDraft({ type: 'income' })}
+                  className={`p-3 rounded-xl border-2 text-sm font-bold transition-all ${
+                    draft.type === 'income'
+                      ? 'bg-green-50 border-green-400 text-green-700'
+                      : 'border-slate-200 text-slate-500'
+                  }`}
+                >
+                  Ingreso
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-black text-slate-400 uppercase">Categoría sugerida</p>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => updateDraft({ category: cat })}
+                      className={`px-3 py-2 rounded-xl text-sm font-bold border-2 transition-all ${
+                        draft.category === cat
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'border-slate-200 text-slate-500 hover:border-slate-300'
+                      }`}
+                    >
+                      {getCategoryLabel(cat)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-black text-slate-400 uppercase">Monto</label>
+                  <input
+                    type="number"
+                    value={draft.amount || ''}
+                    onChange={(e) => updateDraft({ amount: parseFloat(e.target.value) || 0 })}
+                    className="w-full border-2 border-slate-200 rounded-xl p-3 text-sm font-semibold text-slate-800 focus:border-amber-300 focus:outline-none"
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-black text-slate-400 uppercase">Fecha</label>
+                  <input
+                    type="date"
+                    value={(draft.date ? draft.date.split('T')[0] : new Date().toISOString().split('T')[0])}
+                    onChange={(e) => updateDraft({ date: new Date(e.target.value).toISOString() })}
+                    className="w-full border-2 border-slate-200 rounded-xl p-3 text-sm font-semibold text-slate-800 focus:border-amber-300 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-slate-400 uppercase">Nota corta</label>
+                <input
+                  type="text"
+                  value={draft.note || ''}
+                  onChange={(e) => updateDraft({ note: e.target.value })}
+                  className="w-full border-2 border-slate-200 rounded-xl p-3 text-sm font-semibold text-slate-800 focus:border-amber-300 focus:outline-none"
+                  placeholder="Ej. Café con amigos"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">¿Todo bien?</span>
+                <button
+                  type="button"
+                  onClick={() => updateDraft({ recurring: !draft.recurring })}
+                  className={`px-3 py-2 rounded-xl text-xs font-black border-2 transition-all ${
+                    draft.recurring ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-slate-200 text-slate-500'
+                  }`}
+                >
+                  {draft.recurring ? 'Repetir mensual' : 'Único'}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={!draft.amount}
+                onClick={() => handleConfirmDraft()}
+                className="w-full bg-amber-500 text-white font-bold text-lg py-3 rounded-2xl shadow-lg shadow-amber-200 active:scale-95 transition-all disabled:opacity-60"
+                aria-label="Confirm voice draft"
+              >
+                Confirmar y guardar
+              </button>
+            </div>
+          ) : (
+            <div className="p-4 rounded-2xl border-2 border-dashed border-slate-200 text-center text-sm font-semibold text-slate-500">
+              Activa el micrófono o pega un texto corto. Sin chat libre, solo datos clave.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const renderTransferForm = () => {
     // Determine max amount based on direction and target
@@ -726,6 +1549,240 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     );
   };
 
+  const renderReceiptUpload = () => {
+    return (
+      <div className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            type="button"
+            onClick={() => setView('menu')}
+            className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+            aria-label="Go back to menu"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <h2 className="text-xl font-black text-amber-700">Sube un recibo</h2>
+        </div>
+
+        <div className="space-y-5 flex-1 overflow-y-auto no-scrollbar pb-4">
+          <div className="p-4 bg-amber-50 border-2 border-amber-100 rounded-2xl flex gap-3 items-start">
+            <AlertTriangle className="text-amber-600 shrink-0" size={20} />
+            <div>
+              <p className="text-sm font-bold text-amber-800">La IA solo propone.</p>
+              <p className="text-xs text-amber-700 font-medium">No se guardará nada hasta que confirmes el borrador.</p>
+            </div>
+          </div>
+
+          <label className="flex flex-col gap-2 p-5 border-2 border-dashed border-amber-200 rounded-2xl bg-white hover:border-amber-400 cursor-pointer transition-all">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-amber-100 rounded-xl text-amber-700">
+                <Upload size={24} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-800">Selecciona una foto del recibo</p>
+                <p className="text-xs font-medium text-slate-500">JPG, PNG o HEIC. Luz clara y texto legible.</p>
+              </div>
+            </div>
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handleReceiptUpload(e.target.files?.[0])}
+            />
+          </label>
+
+          {aiLoading && (
+            <div className="flex items-center gap-3 text-sm font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <Loader2 size={18} className="animate-spin" />
+              Procesando recibo con IA...
+            </div>
+          )}
+
+          {aiError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-sm font-bold">
+              {aiError}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => handleViewChange('expense')}
+            className="w-full bg-white text-slate-600 font-bold text-sm py-3 rounded-xl border-2 border-slate-200 hover:border-slate-300 active:scale-95 transition-transform"
+          >
+            Prefiero registrarlo manualmente
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAiReview = () => {
+    if (!aiDraft) {
+      return (
+        <div className="flex flex-col h-full items-center justify-center text-center gap-4 text-slate-500">
+          <AlertTriangle className="text-amber-500" />
+          <p className="font-bold">No hay borrador disponible.</p>
+          <button
+            type="button"
+            onClick={() => setView('ai_upload')}
+            className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold"
+          >
+            Subir un recibo
+          </button>
+        </div>
+      );
+    }
+
+    const missingFields = aiDraft.missing || [];
+    const confidence = aiDraft.confidence ?? 0;
+    const requiresConfirmation = confidence < CONFIDENCE_THRESHOLD || missingFields.length > 0;
+    const activeCategories = aiDraftType === 'income' ? incomeCategories : expenseCategories;
+
+    const confidenceLabel = `${Math.round(confidence * 100)}% confianza`;
+
+    return (
+      <form onSubmit={handleSubmit} className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            type="button"
+            onClick={() => setView('ai_upload')}
+            className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+            aria-label="Back to receipt upload"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <h2 className="text-xl font-black text-slate-800">Revisar borrador</h2>
+        </div>
+
+        <div className="space-y-5 flex-1 overflow-y-auto no-scrollbar pb-4">
+          <div
+            className={`p-4 rounded-2xl border-2 flex items-start gap-3 ${
+              requiresConfirmation ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'
+            }`}
+          >
+            <div className={`p-2 rounded-lg ${requiresConfirmation ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+              <ShieldCheck size={16} />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-black text-slate-800">{confidenceLabel}</p>
+              <p className="text-xs font-medium text-slate-500">
+                {requiresConfirmation
+                  ? 'Necesita tu confirmación antes de guardar.'
+                  : 'Listo para confirmar. Aún puedes editar.'}
+              </p>
+              {missingFields.length > 0 && (
+                <div className="mt-2 text-xs font-bold text-amber-700">
+                  Campos que requieren revisión: {missingFields.join(', ')}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex p-1 bg-slate-100 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setAiDraftType('expense')}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                aiDraftType === 'expense' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'
+              }`}
+              aria-label="Mark as expense"
+            >
+              Gasto
+            </button>
+            <button
+              type="button"
+              onClick={() => setAiDraftType('income')}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                aiDraftType === 'income' ? 'bg-white text-[#22be54] shadow-sm' : 'text-slate-400'
+              }`}
+              aria-label="Mark as income"
+            >
+              Ingreso
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Monto</label>
+            <div className="relative">
+              <DollarSign className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-300" size={24} />
+              <input
+                type="number"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-full pl-8 text-3xl font-black text-slate-800 placeholder:text-slate-200 focus:outline-none"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Comercio / Nota</label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Restaurante, súper, etc"
+              className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Fecha</label>
+            <div className="relative">
+              <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full p-4 pl-12 bg-slate-50 rounded-2xl font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Categoría</label>
+            <div className="flex flex-wrap gap-2">
+              {activeCategories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategory(cat)}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all ${
+                    category === cat
+                      ? `border-transparent ${aiDraftType === 'income' ? 'bg-green-600 text-white' : 'bg-rose-600 text-white'} shadow-md`
+                      : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200'
+                  }`}
+                >
+                  {getCategoryLabel(cat)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {aiDraft.draft.ocrText && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Texto detectado</p>
+              <p className="text-xs text-slate-500 whitespace-pre-wrap">{aiDraft.draft.ocrText}</p>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="submit"
+          disabled={!amount || !category || aiLoading}
+          className="w-full bg-amber-600 disabled:bg-slate-300 text-white font-bold text-lg py-4 rounded-2xl shadow-lg shadow-amber-100 active:scale-95 transition-all flex items-center justify-center gap-2 mt-2"
+          aria-label="Confirm AI draft"
+        >
+          <span>{requiresConfirmation ? 'Confirmar y guardar' : 'Guardar borrador'}</span>
+          <Check size={20} />
+        </button>
+      </form>
+    );
+  };
+
 
   const renderRegularPaymentForm = () => {
     return (
@@ -1032,11 +2089,17 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         {/* Content */}
         <div className="mt-2 flex-1 overflow-hidden">
           {view === 'menu' ? renderMenu() :
+           view === 'voice' ? renderVoiceFlow() :
+           view === 'ai_import' ? renderImportForm() :
+           view === 'draft_review' ? renderDraftReview() :
            view === 'transfer' ? renderTransferForm() :
            view === 'regular' ? renderRegularPaymentForm() :
            view === 'withdraw_for_spending' ? renderWithdrawForSpendingForm() :
            view === 'return_unused_cash' ? renderReturnUnusedCashForm() :
            view === 'drafts' ? renderDraftsView() :
+           view === 'ai_upload' ? renderReceiptUpload() :
+           view === 'ai_review' ? renderAiReview() :
+           view === 'draft_review' ? renderDraftReview() :
            renderStandardForm()}
         </div>
       </div>

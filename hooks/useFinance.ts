@@ -2,6 +2,7 @@ import { useContext } from 'react';
 import { FinanceContext } from '../finance/FinanceContext';
 import { 
   Transaction,
+  Transaction, 
   TransactionType,
   ExpenseCategory,
   IncomeCategory,
@@ -10,6 +11,7 @@ import {
   TransactionDraft,
   TransactionDraftSeed,
   DraftStatus
+  TransactionDraft
 } from '../finance/storage';
 import { FinanceSnapshot, NextStep } from '../finance/selectors';
 
@@ -27,6 +29,9 @@ export type {
   FinanceSnapshot,
   NextStep,
 };
+export type { Transaction, TransactionType, ExpenseCategory, IncomeCategory, PaymentFrequency, Irregularity, FinanceSnapshot, NextStep };
+export type { TransactionDraft };
+export type { Transaction, TransactionType, ExpenseCategory, IncomeCategory, PaymentFrequency, Irregularity, FinanceSnapshot, NextStep, TransactionDraft };
 
 export const useFinance = () => {
   const context = useContext(FinanceContext);
