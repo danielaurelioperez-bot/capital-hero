@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Upload, Loader2, AlertTriangle } from 'lucide-react';
+import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity, TransactionType } from '../hooks/useFinance';
 import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Sparkles } from 'lucide-react';
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet } from 'lucide-react';
 import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity, TransactionDraft } from '../hooks/useFinance';
 import { SheetView } from '../finance/storage';
+import { requestTransactionDraft, type ParseTransactionResponse } from '../finance/aiClient';
 
 interface MoneySheetProps {
   isOpen: boolean;
@@ -13,8 +16,9 @@ interface MoneySheetProps {
 }
 
 const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 'menu', initialPayload }) => {
-  const { 
-    addTransaction, 
+  const CONFIDENCE_THRESHOLD = 0.65;
+  const {
+    addTransaction,
     snapshot, 
     moveToSavings, 
     moveToEmergency, 
@@ -62,6 +66,11 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
   // Withdraw for Spending State
   const [spendingSourceFundId, setSpendingSourceFundId] = useState<string | null>(null);
 
+  // AI Draft State
+  const [aiDraft, setAiDraft] = useState<ParseTransactionResponse | null>(null);
+  const [aiDraftType, setAiDraftType] = useState<TransactionType>('expense');
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   // AI Import State
   const [importText, setImportText] = useState('');
   const [draftConfidence, setDraftConfidence] = useState<number | null>(null);
@@ -144,6 +153,15 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (view === 'ai_review') {
+      const allowedCategories = (aiDraftType === 'income' ? incomeCategories : expenseCategories) as string[];
+      if (!allowedCategories.includes(category)) {
+        setCategory(allowedCategories[0] || '');
+      }
+    }
+  }, [aiDraftType, view]);
+
   const resetForm = () => {
     setAmount('');
     setNote('');
@@ -155,6 +173,10 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     setTransferTarget('savings');
     setTransferDirection('deposit'); // Reset transfer direction
     setSpendingSourceFundId(null); // Reset spending source fund
+    setAiDraft(null);
+    setAiDraftType('expense');
+    setAiError(null);
+    setAiLoading(false);
     setImportText('');
     setDraftConfidence(null);
     setDraftMissing([]);
@@ -185,6 +207,32 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     if (newView === 'return_unused_cash' && lastWithdrawalForSpending) {
       setSpendingSourceFundId(lastWithdrawalForSpending.sourceFundId);
       setAmount(snapshot.availableBalance.toFixed(2));
+    }
+  };
+
+  const handleReceiptUpload = async (file?: File | null) => {
+    if (!file) return;
+    setAiError(null);
+    setAiLoading(true);
+    try {
+      const parsed = await requestTransactionDraft(file);
+      setAiDraft(parsed);
+      const draftType = parsed.draft.type || 'expense';
+      setAiDraftType(draftType);
+      setAmount(parsed.draft.amount !== undefined ? String(parsed.draft.amount) : '');
+      setNote(parsed.draft.merchant || parsed.draft.note || '');
+      setDate(parsed.draft.date ? parsed.draft.date.slice(0, 10) : new Date().toISOString().split('T')[0]);
+      setCategory(
+        parsed.draft.category ||
+          (draftType === 'income'
+            ? 'Salary'
+            : 'Essentials'),
+      );
+      setView('ai_review');
+    } catch (error) {
+      setAiError((error as Error).message || 'No pudimos leer el recibo. Intenta otra imagen.');
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -308,6 +356,17 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         } else {
           // Error handling inside returnUnusedCash
         }
+    } else if (view === 'ai_review') {
+        const type = aiDraftType;
+        if (!category) return;
+        addTransaction({
+            amount: numAmount,
+            type,
+            category: category as any,
+            note,
+            date: new Date(date).toISOString(),
+            recurring: false,
+        });
     } else {
         const type = view === 'income' ? 'income' : 'expense';
         addTransaction({
@@ -378,7 +437,7 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       </button>
 
       {/* Add Income */}
-      <button 
+      <button
         onClick={() => handleViewChange('income')}
         className="w-full bg-green-50 border-2 border-green-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Add new income"
@@ -395,8 +454,26 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         <ChevronRight className="text-green-300 group-hover:text-green-500 transition-colors" />
       </button>
 
+      {/* Upload Receipt */}
+      <button
+        onClick={() => handleViewChange('ai_upload')}
+        className="w-full bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Upload receipt for AI draft"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-amber-100 p-3 rounded-xl text-amber-600">
+            <Upload size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Upload receipt</span>
+            <span className="text-xs font-medium text-slate-500">AI drafts, you confirm</span>
+          </div>
+        </div>
+        <ChevronRight className="text-amber-300 group-hover:text-amber-500 transition-colors" />
+      </button>
+
       {/* Add a Regular Payment */}
-      <button 
+      <button
         onClick={() => handleViewChange('regular')}
         className="w-full bg-indigo-50 border-2 border-indigo-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Add a regular payment"
@@ -1081,6 +1158,240 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     );
   };
 
+  const renderReceiptUpload = () => {
+    return (
+      <div className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            type="button"
+            onClick={() => setView('menu')}
+            className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+            aria-label="Go back to menu"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <h2 className="text-xl font-black text-amber-700">Sube un recibo</h2>
+        </div>
+
+        <div className="space-y-5 flex-1 overflow-y-auto no-scrollbar pb-4">
+          <div className="p-4 bg-amber-50 border-2 border-amber-100 rounded-2xl flex gap-3 items-start">
+            <AlertTriangle className="text-amber-600 shrink-0" size={20} />
+            <div>
+              <p className="text-sm font-bold text-amber-800">La IA solo propone.</p>
+              <p className="text-xs text-amber-700 font-medium">No se guardará nada hasta que confirmes el borrador.</p>
+            </div>
+          </div>
+
+          <label className="flex flex-col gap-2 p-5 border-2 border-dashed border-amber-200 rounded-2xl bg-white hover:border-amber-400 cursor-pointer transition-all">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-amber-100 rounded-xl text-amber-700">
+                <Upload size={24} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-800">Selecciona una foto del recibo</p>
+                <p className="text-xs font-medium text-slate-500">JPG, PNG o HEIC. Luz clara y texto legible.</p>
+              </div>
+            </div>
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handleReceiptUpload(e.target.files?.[0])}
+            />
+          </label>
+
+          {aiLoading && (
+            <div className="flex items-center gap-3 text-sm font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <Loader2 size={18} className="animate-spin" />
+              Procesando recibo con IA...
+            </div>
+          )}
+
+          {aiError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-sm font-bold">
+              {aiError}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => handleViewChange('expense')}
+            className="w-full bg-white text-slate-600 font-bold text-sm py-3 rounded-xl border-2 border-slate-200 hover:border-slate-300 active:scale-95 transition-transform"
+          >
+            Prefiero registrarlo manualmente
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAiReview = () => {
+    if (!aiDraft) {
+      return (
+        <div className="flex flex-col h-full items-center justify-center text-center gap-4 text-slate-500">
+          <AlertTriangle className="text-amber-500" />
+          <p className="font-bold">No hay borrador disponible.</p>
+          <button
+            type="button"
+            onClick={() => setView('ai_upload')}
+            className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold"
+          >
+            Subir un recibo
+          </button>
+        </div>
+      );
+    }
+
+    const missingFields = aiDraft.missing || [];
+    const confidence = aiDraft.confidence ?? 0;
+    const requiresConfirmation = confidence < CONFIDENCE_THRESHOLD || missingFields.length > 0;
+    const activeCategories = aiDraftType === 'income' ? incomeCategories : expenseCategories;
+
+    const confidenceLabel = `${Math.round(confidence * 100)}% confianza`;
+
+    return (
+      <form onSubmit={handleSubmit} className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            type="button"
+            onClick={() => setView('ai_upload')}
+            className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+            aria-label="Back to receipt upload"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <h2 className="text-xl font-black text-slate-800">Revisar borrador</h2>
+        </div>
+
+        <div className="space-y-5 flex-1 overflow-y-auto no-scrollbar pb-4">
+          <div
+            className={`p-4 rounded-2xl border-2 flex items-start gap-3 ${
+              requiresConfirmation ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'
+            }`}
+          >
+            <div className={`p-2 rounded-lg ${requiresConfirmation ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+              <ShieldCheck size={16} />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-black text-slate-800">{confidenceLabel}</p>
+              <p className="text-xs font-medium text-slate-500">
+                {requiresConfirmation
+                  ? 'Necesita tu confirmación antes de guardar.'
+                  : 'Listo para confirmar. Aún puedes editar.'}
+              </p>
+              {missingFields.length > 0 && (
+                <div className="mt-2 text-xs font-bold text-amber-700">
+                  Campos que requieren revisión: {missingFields.join(', ')}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex p-1 bg-slate-100 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setAiDraftType('expense')}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                aiDraftType === 'expense' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'
+              }`}
+              aria-label="Mark as expense"
+            >
+              Gasto
+            </button>
+            <button
+              type="button"
+              onClick={() => setAiDraftType('income')}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                aiDraftType === 'income' ? 'bg-white text-[#22be54] shadow-sm' : 'text-slate-400'
+              }`}
+              aria-label="Mark as income"
+            >
+              Ingreso
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Monto</label>
+            <div className="relative">
+              <DollarSign className="absolute left-0 top-1/2 -translate-y-1/2 text-slate-300" size={24} />
+              <input
+                type="number"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-full pl-8 text-3xl font-black text-slate-800 placeholder:text-slate-200 focus:outline-none"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Comercio / Nota</label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Restaurante, súper, etc"
+              className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Fecha</label>
+            <div className="relative">
+              <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full p-4 pl-12 bg-slate-50 rounded-2xl font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Categoría</label>
+            <div className="flex flex-wrap gap-2">
+              {activeCategories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategory(cat)}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all ${
+                    category === cat
+                      ? `border-transparent ${aiDraftType === 'income' ? 'bg-green-600 text-white' : 'bg-rose-600 text-white'} shadow-md`
+                      : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200'
+                  }`}
+                >
+                  {getCategoryLabel(cat)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {aiDraft.draft.ocrText && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Texto detectado</p>
+              <p className="text-xs text-slate-500 whitespace-pre-wrap">{aiDraft.draft.ocrText}</p>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="submit"
+          disabled={!amount || !category || aiLoading}
+          className="w-full bg-amber-600 disabled:bg-slate-300 text-white font-bold text-lg py-4 rounded-2xl shadow-lg shadow-amber-100 active:scale-95 transition-all flex items-center justify-center gap-2 mt-2"
+          aria-label="Confirm AI draft"
+        >
+          <span>{requiresConfirmation ? 'Confirmar y guardar' : 'Guardar borrador'}</span>
+          <Check size={20} />
+        </button>
+      </form>
+    );
+  };
+
 
   const renderRegularPaymentForm = () => {
     return (
@@ -1393,6 +1704,8 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
            view === 'regular' ? renderRegularPaymentForm() :
            view === 'withdraw_for_spending' ? renderWithdrawForSpendingForm() :
            view === 'return_unused_cash' ? renderReturnUnusedCashForm() :
+           view === 'ai_upload' ? renderReceiptUpload() :
+           view === 'ai_review' ? renderAiReview() :
            view === 'draft_review' ? renderDraftReview() :
            renderStandardForm()}
         </div>

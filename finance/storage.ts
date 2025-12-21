@@ -15,6 +15,8 @@ export type SheetView =
   | 'transfer'
   | 'withdraw_for_spending'
   | 'return_unused_cash'
+  | 'ai_upload'
+  | 'ai_review';
   | 'ai_import'
   | 'draft_review';
 
