@@ -26,6 +26,7 @@ export interface TransactionDraft {
   category?: ExpenseCategory | IncomeCategory | string;
   notes?: string;
 }
+export type SheetView = 'menu' | 'income' | 'regular' | 'expense' | 'transfer' | 'withdraw_for_spending' | 'return_unused_cash' | 'draft_review';
 
 export interface Transaction {
   id: string;
@@ -38,6 +39,17 @@ export interface Transaction {
   frequency?: PaymentFrequency;
   irregularity?: Irregularity;
   sourceFundId?: string; // New: 'emergency' or a goal ID, or undefined for availableBalance
+}
+
+export interface TransactionDraft {
+  id: string;
+  type: TransactionType;
+  amount?: number;
+  merchant?: string;
+  date?: string;
+  category?: ExpenseCategory | IncomeCategory;
+  notes?: string;
+  confidence?: number;
 }
 
 export interface Goal {

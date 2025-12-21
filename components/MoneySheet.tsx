@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet } from 'lucide-react';
 import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity, TransactionDraft } from '../hooks/useFinance';
 import { SheetView } from '../finance/storage';
 
@@ -16,6 +18,7 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     snapshot, 
     moveToSavings, 
     moveToEmergency, 
+    moveToEmergency,
     withdrawFromSavings,
     withdrawFromEmergency,
     initiateWithdrawalForSpending, // NEW
@@ -24,8 +27,24 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     addDraft,
     clearDraft,
     draft,
+    pendingTransactions,
+    addDraft,
+    confirmDraft,
+    editDraft,
+    discardDraft,
   } = useFinance();
   const [view, setView] = useState<SheetView>(initialView);
+
+  const mockDraft = useMemo<TransactionDraft>(() => ({
+    id: 'draft-mock-1',
+    type: 'expense',
+    amount: 18.75,
+    merchant: 'Café Central',
+    category: 'Non-essentials',
+    date: new Date().toISOString(),
+    notes: 'Cortado + snack rápido',
+    confidence: 0.64,
+  }), []);
 
   // Form State
   const [amount, setAmount] = useState('');
@@ -105,8 +124,14 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
           if (i.category) setCategory(i.category);
         }
       }
+      if (initialView === 'draft_review') {
+        const exists = pendingTransactions.some(draft => draft.id === mockDraft.id);
+        if (!exists) {
+          addDraft(mockDraft);
+        }
+      }
     }
-  }, [isOpen, initialView, lastWithdrawalForSpending, snapshot.availableBalance]); // Add new dependencies
+  }, [isOpen, initialView, lastWithdrawalForSpending, snapshot.availableBalance, pendingTransactions, addDraft, mockDraft]); // Add new dependencies
 
   // Reset view and form when closed
   useEffect(() => {
@@ -407,7 +432,7 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       </button>
 
       {/* Withdraw for Spending (Moved to bottom as less frequent) */}
-      <button 
+      <button
         onClick={() => handleViewChange('withdraw_for_spending')}
         className="w-full bg-red-50 border-2 border-red-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Withdraw money for spending from a specific fund"
@@ -422,6 +447,24 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
           </div>
         </div>
         <ChevronRight className="text-red-300 group-hover:text-red-500 transition-colors" />
+      </button>
+
+      {/* Draft Review */}
+      <button
+        onClick={() => handleViewChange('draft_review')}
+        className="w-full bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Review a pending draft"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-amber-100 p-3 rounded-xl text-amber-600">
+            <Info size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Draft Review</span>
+            <span className="text-xs font-medium text-slate-500">Check a pending transaction</span>
+          </div>
+        </div>
+        <ChevronRight className="text-amber-300 group-hover:text-amber-500 transition-colors" />
       </button>
     </div>
   );
@@ -594,6 +637,92 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       </div>
     </div>
   );
+  const renderDraftReview = () => {
+    const draft = pendingTransactions.find(d => d.id === mockDraft.id) ?? mockDraft;
+    const formattedDate = draft.date ? new Date(draft.date).toLocaleDateString() : 'Sin fecha';
+    const potentialImpact = draft.amount ? draft.amount.toFixed(2) : '0.00';
+
+    return (
+      <div className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            type="button"
+            onClick={() => setView('menu')}
+            className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+            aria-label="Go back to menu"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <div>
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-wider">Draft Review</p>
+            <h2 className="text-xl font-black text-slate-800">Transaction Draft</h2>
+          </div>
+        </div>
+
+        <div className="space-y-4 flex-1 overflow-y-auto pb-4">
+          <div className="bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl space-y-2">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Merchant</p>
+                <p className="text-lg font-black text-slate-800">{draft.merchant || 'Unknown merchant'}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Amount</p>
+                <p className="text-2xl font-black text-rose-600">-${draft.amount?.toFixed(2) || '0.00'}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-sm text-slate-600">
+              <div className="bg-white border border-slate-100 rounded-xl p-3">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Category</p>
+                <p className="font-semibold">{getCategoryLabel(draft.category || 'Non-essentials')}</p>
+              </div>
+              <div className="bg-white border border-slate-100 rounded-xl p-3">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Date</p>
+                <p className="font-semibold">{formattedDate}</p>
+              </div>
+            </div>
+            <div className="bg-white border border-slate-100 rounded-xl p-3">
+              <p className="text-[10px] font-bold text-slate-400 uppercase">Notes</p>
+              <p className="font-semibold text-slate-700">{draft.notes || 'No notes added'}</p>
+            </div>
+          </div>
+
+          <div className="bg-amber-50 border-2 border-amber-100 rounded-2xl p-4 space-y-1">
+            <p className="text-xs font-bold text-amber-700 uppercase tracking-wider">Potential impact</p>
+            <p className="text-sm font-semibold text-amber-800">This draft may reduce Safe to Spend by ${potentialImpact}. It is not counted until you confirm.</p>
+            <p className="text-[11px] text-amber-700">Confidence score: {(draft.confidence ?? 0).toFixed(2)}</p>
+          </div>
+        </div>
+
+        <div className="space-y-2 mt-auto">
+          <button
+            className="w-full bg-emerald-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-emerald-100 active:scale-95 transition-all"
+            onClick={() => { confirmDraft(draft.id); onClose(); }}
+          >
+            Confirmar
+          </button>
+          <button
+            className="w-full bg-white text-slate-800 font-bold py-4 rounded-2xl border-2 border-slate-200 active:scale-95 transition-all"
+            onClick={() => editDraft(draft.id, { notes: draft.notes ? `${draft.notes} (editado)` : 'Nota editada' })}
+          >
+            Editar
+          </button>
+          <button
+            className="w-full bg-white text-amber-700 font-bold py-4 rounded-2xl border-2 border-amber-200 active:scale-95 transition-all"
+            onClick={() => addDraft(draft)}
+          >
+            Pendiente
+          </button>
+          <button
+            className="w-full bg-white text-rose-700 font-bold py-4 rounded-2xl border-2 border-rose-200 active:scale-95 transition-all"
+            onClick={() => { discardDraft(draft.id); onClose(); }}
+          >
+            Descartar
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const renderTransferForm = () => {
     // Determine max amount based on direction and target
@@ -1264,6 +1393,7 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
            view === 'regular' ? renderRegularPaymentForm() :
            view === 'withdraw_for_spending' ? renderWithdrawForSpendingForm() :
            view === 'return_unused_cash' ? renderReturnUnusedCashForm() :
+           view === 'draft_review' ? renderDraftReview() :
            renderStandardForm()}
         </div>
       </div>
