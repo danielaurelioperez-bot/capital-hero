@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet } from 'lucide-react';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Mic, MicOff, Loader2, Wand2, RotateCcw, Sparkles } from 'lucide-react';
 import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity } from '../hooks/useFinance';
 import { SheetView } from '../finance/storage';
+import { parseTransactionDraft, ParsedTransactionDraft } from '../finance/ai';
 
 interface MoneySheetProps {
   isOpen: boolean;
@@ -39,6 +40,14 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
 
   // Withdraw for Spending State
   const [spendingSourceFundId, setSpendingSourceFundId] = useState<string | null>(null);
+
+  // Voice Capture State
+  const [transcript, setTranscript] = useState('');
+  const [draft, setDraft] = useState<ParsedTransactionDraft | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const recognitionRef = React.useRef<SpeechRecognition | null>(null);
 
   // Initialize date to today on mount
   useEffect(() => {
@@ -113,6 +122,11 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     setTransferTarget('savings');
     setTransferDirection('deposit'); // Reset transfer direction
     setSpendingSourceFundId(null); // Reset spending source fund
+    setTranscript('');
+    setDraft(null);
+    setVoiceError(null);
+    setIsParsing(false);
+    setIsListening(false);
   };
 
   const handleViewChange = (newView: SheetView) => {
@@ -189,6 +203,21 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     onClose();
   };
 
+  const handleConfirmDraft = () => {
+    if (!draft || !draft.amount) return;
+    const txDate = draft.date ? new Date(draft.date) : new Date();
+    addTransaction({
+      amount: draft.amount,
+      type: draft.type,
+      category: draft.category as any,
+      note: draft.note || 'Registro por voz',
+      date: txDate.toISOString(),
+      recurring: Boolean(draft.recurring),
+      frequency: draft.recurring ? 'monthly' : undefined,
+    });
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   const incomeCategories: IncomeCategory[] = ['Salary', 'Freelance', 'Bonus', 'Other'];
@@ -199,6 +228,66 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       if (cat === 'Toxic') return 'Impulse';
       if (cat === 'Non-essentials') return 'Lifestyle';
       return cat;
+  };
+
+  const updateDraft = (changes: Partial<ParsedTransactionDraft>) => {
+    setDraft((prev) => (prev ? { ...prev, ...changes } : prev));
+  };
+
+  const handleParseTranscript = async (text: string) => {
+    if (!text.trim()) {
+      setVoiceError('Necesitas decir o escribir el gasto/ingreso primero.');
+      return;
+    }
+    setIsParsing(true);
+    setVoiceError(null);
+    try {
+      const parsed = await parseTransactionDraft(text);
+      setDraft(parsed);
+    } catch (error) {
+      setVoiceError('No pude crear el borrador. Inténtalo de nuevo.');
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const startListening = () => {
+    const SpeechRecognitionClass =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionClass) {
+      setVoiceError('Tu navegador no permite captura de voz. Usa el texto rápido.');
+      return;
+    }
+
+    const recognition: any = new SpeechRecognitionClass();
+    recognition.lang = 'es-ES';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: any) => {
+      const spoken = event.results[0][0].transcript;
+      setTranscript(spoken);
+      handleParseTranscript(spoken);
+    };
+
+    recognition.onerror = () => {
+      setVoiceError('No logré escucharte. Prueba de nuevo.');
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    setIsListening(true);
+    recognition.start();
+    recognitionRef.current = recognition as any;
+  };
+
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    setIsListening(false);
   };
 
   const renderMenu = () => (
@@ -224,7 +313,7 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       </button>
 
       {/* Add Income */}
-      <button 
+      <button
         onClick={() => handleViewChange('income')}
         className="w-full bg-green-50 border-2 border-green-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
         aria-label="Add new income"
@@ -239,6 +328,24 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
           </div>
         </div>
         <ChevronRight className="text-green-300 group-hover:text-green-500 transition-colors" />
+      </button>
+
+      {/* Voice Capture */}
+      <button
+        onClick={() => handleViewChange('voice')}
+        className="w-full bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Add using voice"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-amber-100 p-3 rounded-xl text-amber-600">
+            <Mic size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Registrar por voz</span>
+            <span className="text-xs font-medium text-slate-500">Habla y revisa el borrador guiado</span>
+          </div>
+        </div>
+        <ChevronRight className="text-amber-300 group-hover:text-amber-500 transition-colors" />
       </button>
 
       {/* Add a Regular Payment */}
@@ -296,6 +403,231 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       </button>
     </div>
   );
+
+  const renderVoiceFlow = () => {
+    const categories = draft?.type === 'income' ? incomeCategories : expenseCategories;
+
+    return (
+      <div className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            type="button"
+            onClick={() => setView('menu')}
+            className="p-2 -ml-2 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform"
+            aria-label="Go back to menu"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-wide text-amber-500">Modo rápido</p>
+            <h2 className="text-xl font-black text-slate-800">Registrar por voz</h2>
+          </div>
+        </div>
+
+        <div className="space-y-4 flex-1 overflow-y-auto pb-4">
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 via-white to-amber-50 border-2 border-amber-100">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="bg-amber-100 p-2 rounded-xl text-amber-600">
+                <Sparkles size={18} />
+              </div>
+              <div>
+                <p className="text-xs font-black text-amber-700">Coach</p>
+                <p className="text-sm font-semibold text-slate-700">Di el monto y la categoría. Yo armo el borrador.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={isListening ? stopListening : startListening}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${
+                  isListening ? 'bg-rose-600 text-white shadow-lg shadow-rose-100' : 'bg-amber-500 text-white shadow-lg shadow-amber-100'
+                }`}
+                aria-label={isListening ? 'Stop listening' : 'Start listening'}
+              >
+                {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                {isListening ? 'Escuchando...' : 'Grabar voz'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTranscript('');
+                  setDraft(null);
+                  setVoiceError(null);
+                }}
+                className="px-3 py-3 rounded-xl font-bold text-sm border-2 border-slate-200 text-slate-500 hover:border-slate-300 active:scale-95"
+                aria-label="Reset voice draft"
+              >
+                <RotateCcw size={16} />
+              </button>
+            </div>
+            {voiceError && (
+              <p className="text-xs font-semibold text-rose-600 mt-3">{voiceError}</p>
+            )}
+          </div>
+
+          <div className="bg-white border-2 border-slate-100 rounded-2xl p-4 space-y-3 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black text-slate-400 uppercase">Texto reconocido</p>
+                <p className="text-sm font-bold text-slate-800">Dijiste:</p>
+              </div>
+              {isParsing && <Loader2 className="animate-spin text-amber-500" size={18} />}
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm font-semibold text-slate-700 min-h-[48px]">
+              {transcript || 'Aún no hay texto. Presiona grabar.'}
+            </div>
+            <div className="space-y-2">
+              <label className="text-[11px] font-black text-slate-400 uppercase">Editar texto rápido</label>
+              <textarea
+                value={transcript}
+                onChange={(e) => setTranscript(e.target.value)}
+                className="w-full border-2 border-slate-100 rounded-xl p-3 text-sm font-semibold text-slate-700 focus:border-amber-300 focus:outline-none"
+                rows={2}
+                placeholder="Ej. Gasté 25 en café"
+              />
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => handleParseTranscript(transcript)}
+                disabled={isParsing}
+                className="flex-1 bg-slate-900 text-white font-bold text-sm py-3 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                aria-label="Parse voice text"
+              >
+                <Wand2 size={16} /> Generar borrador
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('expense')}
+                className="px-3 py-3 rounded-xl font-bold text-sm border-2 border-slate-200 text-slate-500 hover:border-slate-300 active:scale-95"
+                aria-label="Switch to manual form"
+              >
+                Manual
+              </button>
+            </div>
+          </div>
+
+          {draft ? (
+            <div className="bg-white border-2 border-amber-200 rounded-2xl p-4 space-y-4 shadow-md">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[11px] font-black text-amber-500 uppercase">Borrador listo</p>
+                  <p className="text-lg font-black text-slate-800">Revisa y confirma</p>
+                </div>
+                <Check className="text-amber-500" size={20} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => updateDraft({ type: 'expense' })}
+                  className={`p-3 rounded-xl border-2 text-sm font-bold transition-all ${
+                    draft.type === 'expense'
+                      ? 'bg-rose-50 border-rose-400 text-rose-700'
+                      : 'border-slate-200 text-slate-500'
+                  }`}
+                >
+                  Gasto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateDraft({ type: 'income' })}
+                  className={`p-3 rounded-xl border-2 text-sm font-bold transition-all ${
+                    draft.type === 'income'
+                      ? 'bg-green-50 border-green-400 text-green-700'
+                      : 'border-slate-200 text-slate-500'
+                  }`}
+                >
+                  Ingreso
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-black text-slate-400 uppercase">Categoría sugerida</p>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => updateDraft({ category: cat })}
+                      className={`px-3 py-2 rounded-xl text-sm font-bold border-2 transition-all ${
+                        draft.category === cat
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'border-slate-200 text-slate-500 hover:border-slate-300'
+                      }`}
+                    >
+                      {getCategoryLabel(cat)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-black text-slate-400 uppercase">Monto</label>
+                  <input
+                    type="number"
+                    value={draft.amount || ''}
+                    onChange={(e) => updateDraft({ amount: parseFloat(e.target.value) || 0 })}
+                    className="w-full border-2 border-slate-200 rounded-xl p-3 text-sm font-semibold text-slate-800 focus:border-amber-300 focus:outline-none"
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-black text-slate-400 uppercase">Fecha</label>
+                  <input
+                    type="date"
+                    value={(draft.date ? draft.date.split('T')[0] : new Date().toISOString().split('T')[0])}
+                    onChange={(e) => updateDraft({ date: new Date(e.target.value).toISOString() })}
+                    className="w-full border-2 border-slate-200 rounded-xl p-3 text-sm font-semibold text-slate-800 focus:border-amber-300 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[11px] font-black text-slate-400 uppercase">Nota corta</label>
+                <input
+                  type="text"
+                  value={draft.note || ''}
+                  onChange={(e) => updateDraft({ note: e.target.value })}
+                  className="w-full border-2 border-slate-200 rounded-xl p-3 text-sm font-semibold text-slate-800 focus:border-amber-300 focus:outline-none"
+                  placeholder="Ej. Café con amigos"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500">¿Todo bien?</span>
+                <button
+                  type="button"
+                  onClick={() => updateDraft({ recurring: !draft.recurring })}
+                  className={`px-3 py-2 rounded-xl text-xs font-black border-2 transition-all ${
+                    draft.recurring ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-slate-200 text-slate-500'
+                  }`}
+                >
+                  {draft.recurring ? 'Repetir mensual' : 'Único'}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={!draft.amount}
+                onClick={() => handleConfirmDraft()}
+                className="w-full bg-amber-500 text-white font-bold text-lg py-3 rounded-2xl shadow-lg shadow-amber-200 active:scale-95 transition-all disabled:opacity-60"
+                aria-label="Confirm voice draft"
+              >
+                Confirmar y guardar
+              </button>
+            </div>
+          ) : (
+            <div className="p-4 rounded-2xl border-2 border-dashed border-slate-200 text-center text-sm font-semibold text-slate-500">
+              Activa el micrófono o pega un texto corto. Sin chat libre, solo datos clave.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const renderTransferForm = () => {
     // Determine max amount based on direction and target
@@ -959,9 +1291,10 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
 
         {/* Content */}
         <div className="mt-2 flex-1 overflow-hidden">
-          {view === 'menu' ? renderMenu() : 
-           view === 'transfer' ? renderTransferForm() : 
-           view === 'regular' ? renderRegularPaymentForm() : 
+          {view === 'menu' ? renderMenu() :
+           view === 'voice' ? renderVoiceFlow() :
+           view === 'transfer' ? renderTransferForm() :
+           view === 'regular' ? renderRegularPaymentForm() :
            view === 'withdraw_for_spending' ? renderWithdrawForSpendingForm() :
            view === 'return_unused_cash' ? renderReturnUnusedCashForm() :
            renderStandardForm()}
