@@ -1,4 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, ListChecks } from 'lucide-react';
+import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity, Transaction, TransactionDraft } from '../hooks/useFinance';
+import { SheetView } from '../finance/storage';
+import DraftList from './DraftList';
+import TransactionModal from './TransactionModal';
 import { X, ArrowLeft, ArrowRightLeft, ShieldCheck, Lock, ChevronRight, Check, DollarSign, Calendar, Shield, Zap, Target, Info, Wallet, Mic, MicOff, Loader2, Wand2, RotateCcw, Sparkles } from 'lucide-react';
 import { useFinance, IncomeCategory, ExpenseCategory, PaymentFrequency, Irregularity } from '../hooks/useFinance';
 import { SheetView } from '../finance/storage';
@@ -20,6 +25,10 @@ interface MoneySheetProps {
 }
 
 const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 'menu', initialPayload }) => {
+  const {
+    addTransaction,
+    snapshot,
+    moveToSavings,
   const CONFIDENCE_THRESHOLD = 0.65;
   const {
     addTransaction,
@@ -32,6 +41,11 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     initiateWithdrawalForSpending, // NEW
     returnUnusedCash, // NEW
     lastWithdrawalForSpending, // NEW
+    drafts,
+    confirmDraft,
+    confirmAllDrafts,
+    markDraftStatus,
+    updateDraft,
     addDraft,
     clearDraft,
     draft,
@@ -70,6 +84,9 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
   // Withdraw for Spending State
   const [spendingSourceFundId, setSpendingSourceFundId] = useState<string | null>(null);
 
+  // Draft editing state
+  const [draftModalOpen, setDraftModalOpen] = useState(false);
+  const [editingDraft, setEditingDraft] = useState<TransactionDraft | null>(null);
   // Voice Capture State
   const [transcript, setTranscript] = useState('');
   const [draft, setDraft] = useState<ParsedTransactionDraft | null>(null);
@@ -159,6 +176,8 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
       const timer = setTimeout(() => {
         setView('menu');
         resetForm();
+        setDraftModalOpen(false);
+        setEditingDraft(null);
       }, 300);
       return () => clearTimeout(timer);
     }
@@ -200,6 +219,16 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     setIsParsing(false);
     setParseError('');
     clearDraft();
+  };
+
+  const handleDraftEdit = (draft: TransactionDraft) => {
+    setEditingDraft(draft);
+    setDraftModalOpen(true);
+  };
+
+  const handleDraftSave = (data: Omit<Transaction, 'id'>) => {
+    if (!editingDraft) return;
+    updateDraft(editingDraft.id, { ...editingDraft, ...data, status: 'pending' });
   };
 
   const handleViewChange = (newView: SheetView) => {
@@ -630,6 +659,19 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         <ChevronRight className="text-red-300 group-hover:text-red-500 transition-colors" />
       </button>
 
+      {/* Review drafts */}
+      <button
+        onClick={() => handleViewChange('drafts')}
+        className="w-full bg-amber-50 border-2 border-amber-100 p-4 rounded-2xl flex items-center justify-between group active:scale-95 transition-transform"
+        aria-label="Review imported drafts"
+      >
+        <div className="flex items-center gap-4">
+          <div className="bg-amber-100 p-3 rounded-xl text-amber-600">
+            <ListChecks size={24} />
+          </div>
+          <div className="text-left">
+            <span className="block text-lg font-bold text-slate-800">Review Drafts</span>
+            <span className="text-xs font-medium text-slate-500">Confirm AI imports</span>
       {/* Draft Review */}
       <button
         onClick={() => handleViewChange('draft_review')}
@@ -650,6 +692,9 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
     </div>
   );
 
+  const renderDraftsView = () => (
+    <div className="flex flex-col h-full space-y-4 animate-in slide-in-from-right-8 duration-300">
+      <div className="flex items-center gap-4 mb-2">
   const renderImportForm = () => (
     <form onSubmit={handleParseTransaction} className="flex flex-col h-full animate-in slide-in-from-right-8 duration-300">
       <div className="flex items-center gap-4 mb-6">
@@ -661,6 +706,23 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
         >
           <ArrowLeft size={24} />
         </button>
+        <h2 className="text-xl font-black text-amber-700">Imported Drafts</h2>
+      </div>
+
+      <p className="text-sm font-medium text-slate-500">
+        AI batches stay in draft mode until you confirm them. Pending drafts do not impact your Safe to Spend.
+      </p>
+
+      <DraftList
+        drafts={drafts}
+        title="Drafts inside MoneySheet"
+        onConfirm={(id) => confirmDraft(id)}
+        onEdit={(draft) => handleDraftEdit(draft)}
+        onPending={(id) => markDraftStatus(id, 'pending')}
+        onDiscard={(id) => markDraftStatus(id, 'discarded')}
+        onConfirmAll={drafts.some((d) => d.status === 'pending') ? confirmAllDrafts : undefined}
+        compact
+      />
         <h2 className="text-xl font-black text-indigo-600">Import Transaction</h2>
       </div>
 
@@ -2034,12 +2096,43 @@ const MoneySheet: React.FC<MoneySheetProps> = ({ isOpen, onClose, initialView = 
            view === 'regular' ? renderRegularPaymentForm() :
            view === 'withdraw_for_spending' ? renderWithdrawForSpendingForm() :
            view === 'return_unused_cash' ? renderReturnUnusedCashForm() :
+           view === 'drafts' ? renderDraftsView() :
            view === 'ai_upload' ? renderReceiptUpload() :
            view === 'ai_review' ? renderAiReview() :
            view === 'draft_review' ? renderDraftReview() :
            renderStandardForm()}
         </div>
       </div>
+
+      <TransactionModal
+        isOpen={draftModalOpen}
+        onClose={() => {
+          setDraftModalOpen(false);
+          setEditingDraft(null);
+        }}
+        onSave={(data) => {
+          handleDraftSave(data);
+          setDraftModalOpen(false);
+          setEditingDraft(null);
+        }}
+        initialType={editingDraft?.type || 'expense'}
+        initialData={
+          editingDraft
+            ? {
+                id: editingDraft.id,
+                amount: editingDraft.amount,
+                type: editingDraft.type,
+                category: editingDraft.category,
+                note: editingDraft.note,
+                date: editingDraft.date,
+                recurring: editingDraft.recurring,
+                frequency: editingDraft.frequency,
+                irregularity: editingDraft.irregularity,
+                sourceFundId: editingDraft.sourceFundId,
+              }
+            : undefined
+        }
+      />
     </div>
   );
 };

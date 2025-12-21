@@ -1,18 +1,39 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Plus, Trash2, Repeat, Edit2, Shield, Zap, Sparkles, Info } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Repeat, Edit2, Shield, Zap, Sparkles, Info, UploadCloud, ListChecks } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useFinance, Transaction } from '../hooks/useFinance';
+import { useFinance, Transaction, TransactionDraft } from '../hooks/useFinance';
 import TransactionModal from '../components/TransactionModal';
 import { CharacterPortrait } from '../components/PixelAvatars';
+import DraftList from '../components/DraftList';
+import { normalizeDraftPayload, parseTransactionsFromFile } from '../services/aiParser';
 
 const Finances: React.FC = () => {
-  const { incomes, expenses, deleteTransaction, addTransaction, editTransaction, summary, openSheet } = useFinance();
+  const {
+    incomes,
+    expenses,
+    drafts,
+    deleteTransaction,
+    addTransaction,
+    editTransaction,
+    summary,
+    openSheet,
+    ingestDrafts,
+    updateDraft,
+    markDraftStatus,
+    confirmDraft,
+    confirmAllDrafts,
+  } = useFinance();
   const [activeTab, setActiveTab] = useState<'income' | 'expense'>('income');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   const [dismissedRecurringWarning, setDismissedRecurringWarning] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [draftModalOpen, setDraftModalOpen] = useState(false);
+  const [editingDraft, setEditingDraft] = useState<TransactionDraft | null>(null);
 
   const transactions = activeTab === 'income' ? incomes : expenses;
+  const pendingDrafts = drafts.filter((d) => d.status === 'pending');
 
   // Safe Spending Calculation
   const safeCapacity = summary.weeklySafeSpend;
@@ -33,11 +54,40 @@ const Finances: React.FC = () => {
     setEditingTx(null);
   };
 
+  const handleCloseDraftModal = () => {
+    setDraftModalOpen(false);
+    setEditingDraft(null);
+  };
+
   const handleSave = (data: Omit<Transaction, 'id'>) => {
     if (editingTx) {
       editTransaction({ ...data, id: editingTx.id });
     } else {
       addTransaction(data);
+    }
+  };
+
+  const handleDraftEdit = (draft: TransactionDraft) => {
+    setEditingDraft(draft);
+    setDraftModalOpen(true);
+  };
+
+  const handleDraftSave = (data: Omit<Transaction, 'id'>) => {
+    if (!editingDraft) return;
+    updateDraft(editingDraft.id, { ...editingDraft, ...data, status: 'pending' });
+  };
+
+  const handleFileUpload = async (file?: File | null) => {
+    if (!file) return;
+    setIsUploading(true);
+    setUploadError(null);
+    try {
+      const result = await parseTransactionsFromFile(file);
+      ingestDrafts(normalizeDraftPayload(result.drafts, result.confidence));
+    } catch (error: any) {
+      setUploadError(error.message || 'Could not import file');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -169,6 +219,81 @@ const Finances: React.FC = () => {
         </div>
       )}
 
+      {/* Import & Draft review */}
+      <div className="w-full bg-white border-2 border-slate-200 p-5 rounded-3xl shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
+              <UploadCloud size={18} />
+            </div>
+            <div>
+              <p className="text-sm font-black text-slate-800">Import batches</p>
+              <p className="text-xs font-medium text-slate-500">PDFs or screenshots with multiple transactions</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] font-black uppercase text-slate-400">Pending</span>
+            <p className="text-lg font-black text-indigo-700">{pendingDrafts.length}</p>
+          </div>
+        </div>
+
+        <label className="flex items-center justify-between gap-3 w-full border-2 border-dashed border-slate-200 rounded-2xl p-4 cursor-pointer hover:border-indigo-200 transition-colors">
+          <div>
+            <p className="text-sm font-bold text-slate-700">Drop PDF or image</p>
+            <p className="text-xs font-medium text-slate-400">AI will return one or many drafts</p>
+          </div>
+          <div className="px-3 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl border-b-4 border-indigo-700 active:border-b-0 active:translate-y-0.5 transition-all">
+            {isUploading ? 'Importing...' : 'Upload'}
+          </div>
+          <input
+            type="file"
+            accept="application/pdf,image/*"
+            className="hidden"
+            onChange={(e) => handleFileUpload(e.target.files?.[0])}
+          />
+        </label>
+        {uploadError && <p className="text-xs font-bold text-rose-500">{uploadError}</p>}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => openSheet('drafts')}
+            className="px-3 py-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border-2 border-slate-200 hover:border-slate-300 active:scale-95 transition-transform flex items-center gap-2"
+          >
+            <ListChecks size={14} /> Review in MoneySheet
+          </button>
+          {pendingDrafts.length > 0 && (
+            <button
+              onClick={confirmAllDrafts}
+              className="px-3 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl border-b-4 border-emerald-700 active:border-b-0 active:translate-y-0.5 transition-all flex items-center gap-2"
+            >
+              <Check size={14} /> Confirm all
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="w-full bg-white border-2 border-slate-200 p-5 rounded-3xl shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+            <ListChecks size={16} />
+          </div>
+          <div>
+            <p className="text-sm font-black text-slate-800">Acciones por confirmar</p>
+            <p className="text-xs font-medium text-slate-500">No afectan Safe to Spend hasta que confirmes</p>
+          </div>
+        </div>
+
+        <DraftList
+          drafts={drafts}
+          title="Drafts list"
+          onConfirm={(id) => confirmDraft(id)}
+          onEdit={(draft) => handleDraftEdit(draft)}
+          onPending={(id) => markDraftStatus(id, 'pending')}
+          onDiscard={(id) => markDraftStatus(id, 'discarded')}
+          onConfirmAll={pendingDrafts.length > 0 ? confirmAllDrafts : undefined}
+        />
+      </div>
+
       {/* Transaction List */}
       <div className="space-y-4">
         {/* Toggle Tabs */}
@@ -266,6 +391,32 @@ const Finances: React.FC = () => {
         onSave={handleSave}
         initialType={activeTab}
         initialData={editingTx}
+      />
+
+      <TransactionModal
+        isOpen={draftModalOpen}
+        onClose={handleCloseDraftModal}
+        onSave={(data) => {
+          handleDraftSave(data);
+          handleCloseDraftModal();
+        }}
+        initialType={editingDraft?.type || 'expense'}
+        initialData={
+          editingDraft
+            ? {
+                id: editingDraft.id,
+                amount: editingDraft.amount,
+                type: editingDraft.type,
+                category: editingDraft.category,
+                note: editingDraft.note,
+                date: editingDraft.date,
+                recurring: editingDraft.recurring,
+                frequency: editingDraft.frequency,
+                irregularity: editingDraft.irregularity,
+                sourceFundId: editingDraft.sourceFundId,
+              }
+            : undefined
+        }
       />
     </div>
   );
