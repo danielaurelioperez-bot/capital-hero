@@ -7,7 +7,25 @@ export type PaymentFrequency = 'weekly' | 'biweekly' | 'monthly' | 'irregular';
 export type Irregularity = 'about_weekly' | 'about_monthly' | 'few_times_year';
 
 // UI Types shared across components
-export type SheetView = 'menu' | 'income' | 'regular' | 'expense' | 'transfer' | 'withdraw_for_spending' | 'return_unused_cash';
+export type SheetView =
+  | 'menu'
+  | 'income'
+  | 'regular'
+  | 'expense'
+  | 'transfer'
+  | 'withdraw_for_spending'
+  | 'return_unused_cash'
+  | 'ai_import'
+  | 'draft_review';
+
+export interface TransactionDraft {
+  type: TransactionType;
+  amount: number;
+  merchant?: string;
+  date?: string;
+  category?: ExpenseCategory | IncomeCategory | string;
+  notes?: string;
+}
 
 export interface Transaction {
   id: string;
